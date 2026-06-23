@@ -7,3 +7,11 @@
 *.gcno
 *.info
 *.i
+
+# Build outputs / generated headers
+*.fw
+*.sav
+src/menu_messages.h
+src/messages_data.h
+__pycache__/
+*.pyc

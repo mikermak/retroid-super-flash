@@ -35,9 +35,19 @@
 #include "flash_mgr.h"
 #include "sha256.h"
 #include "supercard_driver.h"
+#include "coverart.h"
 
 #include "res/icons.h"
-#include "res/logo.h"
+#include "res/tab_icons.h"
+// HQ (216-color) logo where flash allows (lite/chis); the SD build is tight on
+// its 512KB budget (it bundles the GBC emulator), so it keeps the compact logo.
+#if defined(SUPERCARD_LITE_IO) || defined(SUPPORT_NORGAMES)
+  #define USE_HQ_LOGO
+  #include "res/logo_hq.h"
+  #include "res/qr_retroid.h"
+#else
+  #include "res/logo.h"
+#endif
 
 extern t_card_info sd_info;
 extern bool fastew;
@@ -97,8 +107,10 @@ enum {
   UiSetRect  = 2,
   UiSetASpd  = 3,
   UiSetHid   = 4,
-  UiSetSave  = 5,
-  UiSetMAX   = 5,
+  UiSetCover = 5,
+  UiSetFlat  = 6,
+  UiSetSave  = 7,
+  UiSetMAX   = 7,
 };
 
 enum {
@@ -206,14 +218,13 @@ const struct {
   uint16_t hi_blend;     // Menu highlight color (browser)
   uint16_t sh_color;     // Menu shadow/disabled color
 } themes[] = {
-  { RGB2GBA(0xaaaaaa), RGB2GBA(0xffffff), RGB2GBA(0x000000), RGB2GBA(0xcccccc), RGB2GBA(0x9999bb), RGB2GBA(0xc08888) }, // White
-  { RGB2GBA(0xeca551), RGB2GBA(0xe7c092), RGB2GBA(0x000000), RGB2GBA(0xbda27b), RGB2GBA(0x90816e), RGB2GBA(0x615d58) }, // Orange
-  { RGB2GBA(0x26879c), RGB2GBA(0x8fb1b8), RGB2GBA(0x000000), RGB2GBA(0x5296a5), RGB2GBA(0x1d7f95), RGB2GBA(0x6f8185) }, // Blue
-  { RGB2GBA(0x308855), RGB2GBA(0x88aa99), RGB2GBA(0x000000), RGB2GBA(0x778888), RGB2GBA(0x777777), RGB2GBA(0x606060) }, // Green
-  { RGB2GBA(0xad11c8), RGB2GBA(0xe47af6), RGB2GBA(0x000000), RGB2GBA(0xad5dc6), RGB2GBA(0x724095), RGB2GBA(0x72667a) }, // Purple
-  { RGB2GBA(0x222222), RGB2GBA(0x444444), RGB2GBA(0xeeeeee), RGB2GBA(0x737573), RGB2GBA(0xaaaaaa), RGB2GBA(0x606060) }, // Dark
+  // Red / Dark (Retroid): red bars, near-black bg, white text, SNES-purple selector.
+  { RGB2GBA(0xcc1f2d), RGB2GBA(0x0c0c10), RGB2GBA(0xf2f2f2), RGB2GBA(0x6651c4), RGB2GBA(0x4a3aa6), RGB2GBA(0x7a5560) }, // Red / Dark
+  // Red / White: red bars, white bg, near-black text, light-red selection tint.
+  { RGB2GBA(0xcc1f2d), RGB2GBA(0xf4f4f4), RGB2GBA(0x1a1a1a), RGB2GBA(0xf0b8bc), RGB2GBA(0xcc1f2d), RGB2GBA(0x9a9a9a) }, // Red / White
 };
 #define THEME_COUNT (sizeof(themes) / sizeof(themes[0]))
+static const char *const theme_names[THEME_COUNT] = { "Red/Dark", "Red/White" };
 
 typedef struct {
   // ROM information
@@ -1389,6 +1400,23 @@ static void draw_central_text_wrapped(const char *t, volatile uint8_t *frame, un
 }
 
 void render_recent(volatile uint8_t *frame) {
+  bool cover_on = false;
+
+  if (!smenu.recent.maxentries)
+    coverart_invalidate();
+  else {
+    t_rentry *sel = &sdr_state->rentries[smenu.recent.selector];
+    if (!coverart_enable)
+      coverart_invalidate();
+    else {
+      const char *selfn = &sel->fpath[sel->fname_offset];
+      unsigned sl = strlen(selfn);
+      bool is_gba = (sl >= 4 && !strcasecmp(&selfn[sl - 4], ".gba"));
+      coverart_update(sel->fpath, 0, is_gba);
+    }
+    cover_on = coverart_enable && coverart_available();
+  }
+
   // Render the list from memory.
   for (unsigned i = 0; i < RECENT_ROWS; i++) {
     if (smenu.recent.seloff + i >= smenu.recent.maxentries)
@@ -1398,16 +1426,27 @@ void render_recent(volatile uint8_t *frame) {
     char *fn = &e->fpath[e->fname_offset];
     render_icon(2, (i+1)*16, guessicon(fn));
 
+    // Keep rows overlapping the cover pane clear of it.
+    unsigned rowy = (1 + i) * 16;
+    unsigned rmax = (cover_on && rowy + 15 >= COVER_PANE_Y) ? (COVER_PANE_X - 3) : SCREEN_WIDTH;
+
     // Animate the row entries if they are too long!
     if (i == smenu.recent.selector - smenu.recent.seloff)
-      draw_text_ovf_rotate(fn, frame, 20, (1 + i) * 16,
-                           SCREEN_WIDTH - 24, &smenu.anim_state);
+      draw_text_ovf_rotate(fn, frame, 20, rowy, rmax - 24, &smenu.anim_state);
     else
-      draw_text_ovf(fn, frame, 20, (1 + i) * 16, SCREEN_WIDTH - 24);
+      draw_text_ovf(fn, frame, 20, rowy, rmax - 24);
   }
 
-  for (unsigned i = 0; i < 240; i += 16)
-    render_icon_trans(i, (smenu.recent.selector - smenu.recent.seloff + 1)*16, 63);
+  unsigned selrowy = (smenu.recent.selector - smenu.recent.seloff + 1) * 16;
+  unsigned hlright = (cover_on && selrowy + 15 >= COVER_PANE_Y) ? COVER_PANE_X : 240;
+  for (unsigned i = 0; i < hlright; i += 16)
+    render_icon_trans(i, selrowy, 63);
+
+  if (cover_on) {
+    coverart_draw(frame);
+    draw_box_outline(frame, COVER_PANE_X - 1, COVER_PANE_X + COVER_W + 1,
+                     COVER_PANE_Y - 1, COVER_PANE_Y + COVER_H + 1, FG_COLOR);
+  }
 }
 
 #ifdef SUPPORT_NORGAMES
@@ -1415,10 +1454,22 @@ void render_flashbrowser(volatile uint8_t *frame) {
   // Render bar below to show block info
   dma_memset16(&frame[240*144], dup8(FG_COLOR), 240*16/2);
 
+  bool cover_on = false;
+
   // Render the list from memory.
-  if (!smenu.fbrowser.maxentries)
+  if (!smenu.fbrowser.maxentries) {
+    coverart_invalidate();
     draw_central_text(msgs[lang_id][MSG_NOR_EMPTY], frame, SCREEN_WIDTH/2, SCREEN_HEIGHT/2-8);
+  }
   else {
+    // Flash games store their game code, so load the cover without a file read.
+    t_flash_game_entry *sel = &sdr_state->nordata.games[smenu.fbrowser.selector];
+    if (!coverart_enable)
+      coverart_invalidate();
+    else
+      coverart_update_gcode(&sel->game_name[sel->bnoffset], (const uint8_t*)&sel->gamecode);
+    cover_on = coverart_enable && coverart_available();
+
     for (unsigned i = 0; i < NORGAMES_ROWS; i++) {
       if (smenu.fbrowser.seloff + i >= smenu.fbrowser.maxentries)
         break;
@@ -1426,22 +1477,32 @@ void render_flashbrowser(volatile uint8_t *frame) {
       t_flash_game_entry *e = &sdr_state->nordata.games[smenu.fbrowser.seloff + i];
       render_icon(2, (i+1)*16, ICON_GBACART);
 
-      // Animate the row entries if they are too long!
+      unsigned rowy = (1 + i) * 16;
+      unsigned rmax = (cover_on && rowy + 15 >= COVER_PANE_Y) ? (COVER_PANE_X - 3) : SCREEN_WIDTH;
+
       char szstr[16];
       human_size(szstr, sizeof(szstr), e->numblks * NOR_BLOCK_SIZE);
-      draw_rightj_text(szstr, frame, SCREEN_WIDTH - 2, (1 + i) * 16);
+      draw_rightj_text(szstr, frame, rmax - 2, rowy);
 
       // Animate the row entries if they are too long!
       const char *romname = &e->game_name[e->bnoffset];
       if (i == smenu.fbrowser.selector - smenu.fbrowser.seloff)
-        draw_text_ovf_rotate(romname, frame, 20, (1 + i) * 16,
-                             SCREEN_WIDTH - 26 - font_width(szstr), &smenu.anim_state);
+        draw_text_ovf_rotate(romname, frame, 20, rowy,
+                             rmax - 26 - font_width(szstr), &smenu.anim_state);
       else
-        draw_text_ovf(romname, frame, 20, (1 + i) * 16, SCREEN_WIDTH - 26 - font_width(szstr));
+        draw_text_ovf(romname, frame, 20, rowy, rmax - 26 - font_width(szstr));
     }
 
-    for (unsigned i = 0; i < 240; i += 16)
-      render_icon_trans(i, (smenu.fbrowser.selector - smenu.fbrowser.seloff + 1)*16, 63);
+    unsigned selrowy = (smenu.fbrowser.selector - smenu.fbrowser.seloff + 1) * 16;
+    unsigned hlright = (cover_on && selrowy + 15 >= COVER_PANE_Y) ? COVER_PANE_X : 240;
+    for (unsigned i = 0; i < hlright; i += 16)
+      render_icon_trans(i, selrowy, 63);
+  }
+
+  if (cover_on) {
+    coverart_draw(frame);
+    draw_box_outline(frame, COVER_PANE_X - 1, COVER_PANE_X + COVER_W + 1,
+                     COVER_PANE_Y - 1, COVER_PANE_Y + COVER_H + 1, FG_COLOR);
   }
 
   char tmp[32], tmp1[32], tmp2[32];
@@ -1459,9 +1520,28 @@ void render_browser(volatile uint8_t *frame) {
   // Render bar below to show path URI
   dma_memset16(&frame[240*144], dup8(FG_COLOR), 240*16/2);
 
-  if (!smenu.browser.dispentries)
+  bool cover_on = false;
+
+  if (!smenu.browser.dispentries) {
+    coverart_invalidate();
     draw_central_text(msgs[lang_id][MSG_BROW_EMPTY], frame, SCREEN_WIDTH/2, SCREEN_HEIGHT/2-8);
+  }
   else {
+    // Load the cover/title-screen for the highlighted ROM (only re-reads on change).
+    t_centry *sel = sdr_state->fileorder[smenu.browser.selector];
+    if (!coverart_enable)
+      coverart_invalidate();
+    else if (sel->attr & AM_DIR)
+      coverart_update("", 0, false);
+    else {
+      char fpath[512];
+      npf_snprintf(fpath, sizeof(fpath), "%s%s", smenu.browser.cpath, sel->fname);
+      unsigned sl = strlen(sel->fname);
+      bool is_gba = (sl >= 4 && !strcasecmp(&sel->fname[sl - 4], ".gba"));
+      coverart_update(fpath, sel->filesize, is_gba);
+    }
+    cover_on = coverart_enable && coverart_available();
+
     for (unsigned i = 0; i < BROWSER_ROWS; i++) {
       if (smenu.browser.seloff + i >= smenu.browser.dispentries)
         break;
@@ -1474,20 +1554,32 @@ void render_browser(volatile uint8_t *frame) {
 
       render_icon(2, (i+1)*16, iconidx);
 
+      // Keep rows overlapping the cover pane clear of it.
+      unsigned rowy = (1 + i) * 16;
+      unsigned rmax = (cover_on && rowy + 15 >= COVER_PANE_Y) ? (COVER_PANE_X - 3) : SCREEN_WIDTH;
+
       char szstr[16];
       human_size(szstr, sizeof(szstr), e->filesize);
-      draw_rightj_text(szstr, frame, SCREEN_WIDTH - 2, (1 + i) * 16);
+      draw_rightj_text(szstr, frame, rmax - 2, rowy);
 
       // Animate the row entries if they are too long!
       if (i == smenu.browser.selector - smenu.browser.seloff)
-        draw_text_ovf_rotate(e->fname, frame, 20, (1 + i) * 16,
-                             SCREEN_WIDTH - 26 - font_width(szstr), &smenu.anim_state);
+        draw_text_ovf_rotate(e->fname, frame, 20, rowy,
+                             rmax - 26 - font_width(szstr), &smenu.anim_state);
       else
-        draw_text_ovf(e->fname, frame, 20, (1 + i) * 16, SCREEN_WIDTH - 26 - font_width(szstr));
+        draw_text_ovf(e->fname, frame, 20, rowy, rmax - 26 - font_width(szstr));
     }
 
-    for (unsigned i = 0; i < 240; i += 16)
-      render_icon_trans(i, (smenu.browser.selector - smenu.browser.seloff + 1)*16, 63);
+    unsigned selrowy = (smenu.browser.selector - smenu.browser.seloff + 1) * 16;
+    unsigned hlright = (cover_on && selrowy + 15 >= COVER_PANE_Y) ? COVER_PANE_X : 240;
+    for (unsigned i = 0; i < hlright; i += 16)
+      render_icon_trans(i, selrowy, 63);
+  }
+
+  if (cover_on) {
+    coverart_draw(frame);
+    draw_box_outline(frame, COVER_PANE_X - 1, COVER_PANE_X + COVER_W + 1,
+                     COVER_PANE_Y - 1, COVER_PANE_Y + COVER_H + 1, FG_COLOR);
   }
 
   // Draw path, cut left part if necessary.
@@ -1966,30 +2058,36 @@ void render_settings(volatile uint8_t *frame) {
 void render_ui_settings(volatile uint8_t *frame) {
   const unsigned colx = 170;
   char tmpbuf[64];
-  npf_snprintf(tmpbuf, sizeof(tmpbuf), "< %lu >", menu_theme + 1U);
+  npf_snprintf(tmpbuf, sizeof(tmpbuf), "< %s >", theme_names[menu_theme < THEME_COUNT ? menu_theme : 0]);
   draw_text_ovf(msgs[lang_id][MSG_UIS_THEME], frame, 8, 22, 224);
   draw_central_text(tmpbuf, frame, colx, 22 );
 
   npf_snprintf(tmpbuf, sizeof(tmpbuf), "< %s >", msgs[lang_id][MSG_LANG_NAME]);
-  draw_text_ovf(msgs[lang_id][MSG_UIS_LANG], frame, 8, 22 + 20, 224);
-  draw_central_text(tmpbuf, frame, colx, 22 + 20 );
+  draw_text_ovf(msgs[lang_id][MSG_UIS_LANG], frame, 8, 39, 224);
+  draw_central_text(tmpbuf, frame, colx, 39 );
 
-  draw_text_ovf(msgs[lang_id][MSG_UIS_RECNT], frame, 8, 22 + 40, 224);
-  draw_central_text(msgs[lang_id][recent_menu ? MSG_KNOB_ENABLED : MSG_KNOB_DISABLED], frame, colx, 22 + 40 );
+  draw_text_ovf(msgs[lang_id][MSG_UIS_RECNT], frame, 8, 56, 224);
+  draw_central_text(msgs[lang_id][recent_menu ? MSG_KNOB_ENABLED : MSG_KNOB_DISABLED], frame, colx, 56 );
 
   npf_snprintf(tmpbuf, sizeof(tmpbuf), "< %s >", msgs[lang_id][MSG_UIS_SPD0 + anim_speed]);
-  draw_text_ovf(msgs[lang_id][MSG_UIS_ANSPD], frame, 8, 22 + 60, 224);
-  draw_central_text(tmpbuf, frame, colx, 22 + 60 );
+  draw_text_ovf(msgs[lang_id][MSG_UIS_ANSPD], frame, 8, 73, 224);
+  draw_central_text(tmpbuf, frame, colx, 73 );
 
-  draw_text_ovf(msgs[lang_id][MSG_UIS_BHID], frame, 8, 22 + 80, 224);
-  draw_central_text(msgs[lang_id][hide_hidden ? MSG_KNOB_DISABLED : MSG_KNOB_ENABLED], frame, colx, 22 + 80 );
+  draw_text_ovf(msgs[lang_id][MSG_UIS_BHID], frame, 8, 90, 224);
+  draw_central_text(msgs[lang_id][hide_hidden ? MSG_KNOB_DISABLED : MSG_KNOB_ENABLED], frame, colx, 90 );
+
+  draw_text_ovf(msgs[lang_id][MSG_UIS_COVER], frame, 8, 107, 224);
+  draw_central_text(msgs[lang_id][coverart_enable ? MSG_KNOB_ENABLED : MSG_KNOB_DISABLED], frame, colx, 107 );
+
+  draw_text_ovf(msgs[lang_id][MSG_UIS_FLAT], frame, 8, 124, 224);
+  draw_central_text(msgs[lang_id][flat_icons ? MSG_KNOB_ENABLED : MSG_KNOB_DISABLED], frame, colx, 124 );
 
   if (smenu.uiset.selector != UiSetSave)
     for (unsigned i = 0; i < 240; i += 16)
-      render_icon_trans(i, 22 + smenu.uiset.selector * 20, 63);
+      render_icon_trans(i, 22 + smenu.uiset.selector * 17, 63);
 
-  draw_button_box(frame, 20, 220, 132, 152, smenu.uiset.selector == UiSetSave);
-  draw_central_text(msgs[lang_id][MSG_UIS_SAVE], frame, 120, 134);
+  draw_button_box(frame, 20, 220, 140, 156, smenu.uiset.selector == UiSetSave);
+  draw_central_text(msgs[lang_id][MSG_UIS_SAVE], frame, 120, 142);
 }
 
 void render_info(volatile uint8_t *frame) {
@@ -1998,15 +2096,28 @@ void render_info(volatile uint8_t *frame) {
   uint32_t gitver = VERSION_SLUG_WORD;
   char tmp[64], tmp2[32];
 
+#ifdef USE_HQ_LOGO
+  render_logo_hq(frame, SCREEN_WIDTH/2, 42);
+#else
   init_logo_palette(&MEM_PALETTE[1]);
   render_logo((uint16_t*)frame, SCREEN_WIDTH/2, 40, 4);
+#endif
 
   switch (smenu.info.selector) {
   case 0:
-    draw_central_text("by davidgf", frame, 120, 70);
+#ifdef USE_HQ_LOGO
+    render_qr_retroid(frame, 10, 78);
+    draw_central_text("Custom Game Boy?", frame, 156, 82);
+    draw_central_text("Visit Retroid.nl", frame, 156, 98);
+    draw_central_text("SuperFW by davidgf", frame, 156, 113);
+    npf_snprintf(tmp, sizeof(tmp), "v%lu.%lu (%08lx)", vmaj, vmin, gitver);
+    draw_central_text(tmp, frame, 156, 126);
+#else
+    draw_central_text("based on SuperFW by davidgf", frame, 120, 70);
     npf_snprintf(tmp, sizeof(tmp), "Version %lu.%lu (%08lx)", vmaj, vmin, gitver);
     draw_central_text(tmp, frame, 120, 95);
     draw_central_text(FW_FLAVOUR " variant", frame, 120, 114);
+#endif
     break;
   case 1:
     draw_central_text("Flash info", frame, 120, 70);
@@ -2060,7 +2171,31 @@ void render_tools(volatile uint8_t *frame) {
     render_icon_trans(i, 26 + smenu.tools.selector * 22, 63);
 }
 
+// Load the stock icon tiles + palette (file/cart icons keep their original
+// colors), and for the Retroid theme swap ONLY the 7 tab-bar icon tiles for
+// crisp white pixel glyphs (they sit on the red header bar).
+static void apply_icon_theme(unsigned thnum) {
+  dma_memcpy16(MEM_VRAM_OBJS, icons_img, sizeof(icons_img) / 2);
+  dma_memcpy16(&MEM_PALETTE[256], icons_pal, sizeof(icons_pal) / 2);
+
+  // Flat white pixel tab icons (toggleable); both themes have a red header bar.
+  if (flat_icons) {
+    dma_memcpy16(&MEM_VRAM_OBJS[ICON_RECENT * 256],          tab_icon_clock,   128);
+    dma_memcpy16(&MEM_VRAM_OBJS[ICON_DISK * 256],            tab_icon_folder,  128);
+#ifdef SUPPORT_NORGAMES
+    dma_memcpy16(&MEM_VRAM_OBJS[ICON_FLASH * 256],           tab_icon_bolt,    128);
+#endif
+    dma_memcpy16(&MEM_VRAM_OBJS[ICON_SETTINGS * 256],        tab_icon_sliders, 128);
+    dma_memcpy16(&MEM_VRAM_OBJS[ICON_UILANG_SETTINGS * 256], tab_icon_globe,   128);
+    dma_memcpy16(&MEM_VRAM_OBJS[ICON_TOOLS * 256],           tab_icon_wrench,  128);
+    dma_memcpy16(&MEM_VRAM_OBJS[ICON_INFO * 256],            tab_icon_info,    128);
+  }
+}
+
 void reload_theme(unsigned thnum) {
+  if (thnum >= THEME_COUNT)   // guard against a stale saved index (themes were reduced)
+    thnum = 0;
+
   // Palette 0..15 contains the main menu template colors
   MEM_PALETTE[FG_COLOR] = themes[thnum].fg_color;
   MEM_PALETTE[BG_COLOR] = themes[thnum].bg_color;
@@ -2075,6 +2210,9 @@ void reload_theme(unsigned thnum) {
 
   // Palette entries for icons and other objects
   MEM_PALETTE[256 + SEL_COLOR] = themes[thnum].hi_blend;
+
+  // (Re)load + theme-tint the OBJ icon palette.
+  apply_icon_theme(thnum);
 }
 
 static const struct {
@@ -2172,14 +2310,14 @@ void menu_init(int sram_testres) {
   // Load recent ROMs (we could disable this for speed)
   recent_reload();
 
+  if (menu_theme >= THEME_COUNT)   // stale saved theme index (theme list was reduced)
+    menu_theme = 0;
   reload_theme(menu_theme);
 
   smenu.menu_tab = (recent_menu && smenu.recent.maxentries) ? MENUTAB_RECENT : MENUTAB_ROMBROWSE;
 
-  // Load icons into VRAM
-  dma_memcpy16(MEM_VRAM_OBJS, icons_img, sizeof(icons_img) / 2);
-  dma_memcpy16(&MEM_PALETTE[256], icons_pal, sizeof(icons_pal) / 2);
-  // Generate some icons (selector)
+  // Icon tiles + palette are loaded/tinted by reload_theme above.
+  // Generate the selector tile.
   dma_memset16(&MEM_VRAM_OBJS[63 * 256], dup8(SEL_COLOR), 256 / 2);
 
   // Further setup initial video regs. BG2 is setup in the bootloader already!
@@ -3112,6 +3250,10 @@ static void keypress_menu_uisettings(unsigned newkeys) {
       hide_hidden ^= 1;
     else if (smenu.uiset.selector == UiSetRect)
       recent_menu ^= 1;
+    else if (smenu.uiset.selector == UiSetCover)
+      coverart_enable ^= 1;
+    else if (smenu.uiset.selector == UiSetFlat)
+      flat_icons ^= 1;
     else if (smenu.uiset.selector == UiSetLang)
       lang_id = (lang_id + LANG_COUNT - 1) % LANG_COUNT;
   }
@@ -3124,6 +3266,10 @@ static void keypress_menu_uisettings(unsigned newkeys) {
       hide_hidden ^= 1;
     else if (smenu.uiset.selector == UiSetRect)
       recent_menu ^= 1;
+    else if (smenu.uiset.selector == UiSetCover)
+      coverart_enable ^= 1;
+    else if (smenu.uiset.selector == UiSetFlat)
+      flat_icons ^= 1;
     else if (smenu.uiset.selector == UiSetLang)
       lang_id = (lang_id + 1) % LANG_COUNT;
   }

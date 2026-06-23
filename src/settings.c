@@ -62,9 +62,11 @@ const uint8_t animspd_lut[] = {
 };
 
 // Menu settings
-uint32_t menu_theme = 0;
+uint32_t menu_theme = 0;   // default to Red/Dark (Retroid) theme
 uint32_t lang_id = 0;
 uint32_t recent_menu = 1;
+uint32_t coverart_enable = 1;   // show cover-art / title-screen preview in the browser
+uint32_t flat_icons = 1;        // flat white tab icons (1) vs original colored icons (0)
 uint32_t hide_hidden = 0;
 uint32_t anim_speed = animspd_cnt / 2;
 
@@ -111,8 +113,10 @@ bool save_ui_settings() {
     "langcode=%c%c\n"
     "recent_menu=%lu\n"
     "anim_speed=%lu\n"
-    "hide_hidden=%lu\n",
-    menu_theme, (lc & 0xFF), (lc >> 8), recent_menu, anim_speed, hide_hidden);
+    "hide_hidden=%lu\n"
+    "coverart=%lu\n"
+    "flaticons=%lu\n",
+    menu_theme, (lc & 0xFF), (lc >> 8), recent_menu, anim_speed, hide_hidden, coverart_enable, flat_icons);
 
   UINT wrbytes;
   FRESULT res = f_write(&fd, buf, strlen(buf), &wrbytes);
@@ -213,6 +217,10 @@ static void parse_ui_settings(void *usr, const char *var, const char *value) {
     hide_hidden = valu;
   else if (!strcmp(var, "anim_speed"))
     anim_speed = valu;
+  else if (!strcmp(var, "coverart"))
+    coverart_enable = valu;
+  else if (!strcmp(var, "flaticons"))
+    flat_icons = valu;
   else if (!strcmp(var, "langcode")) {
     uint16_t code = ((uint8_t)value[0]) | (((uint8_t)value[1]) << 8);
     lang_id = lang_lookup(code);
