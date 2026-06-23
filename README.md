@@ -42,6 +42,12 @@ The output `superfw.gba` is renamed per board (`superfw-<board>.fw`). Notes:
 Any EZ-Flash-Omega style GBA thumbnail pack works — copy its `IMGS/` directory to the SD root. The
 firmware looks up `/IMGS/<code[0]>/<code[1]>/<CODE>.bmp` using each ROM's 4-character game code.
 
+A ready-made pack is the official EZ-Flash Omega thumbnail set:
+**<https://www.ezflash.cn/zip/IMGS.zip>** — extract its `IMGS/` folder to the root of your SD card.
+
+> Note: thumbnail images are game title-screens owned by their respective publishers; they are not
+> bundled with this firmware. Download/supply them yourself.
+
 ## License
 
 GNU GPL v3, inherited from SuperFW. See `LICENSE` / the per-file copyright headers, which are
