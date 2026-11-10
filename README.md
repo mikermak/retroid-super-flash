@@ -19,8 +19,20 @@ firmware for Supercard / SuperChis Game Boy Advance flashcarts — by [Retroid](
 - **High-color boot/info logo** rendered cover-art style; its background follows the active theme.
 - **Info screen** with a small "Custom Game Boy? Visit Retroid.nl" line + QR code.
 
-These additions live in `src/coverart.{c,h}`, `src/res/{logo_hq,qr_retroid,tab_icons}.h`, the theme
-table and render hooks in `src/menu.c`, and the `coverart_enable` / `flat_icons` settings.
+- **Cartridge carousel** (lite + chis builds): the SD ROM browser shows big cartridges instead of a
+  file list — selected cart in the middle, neighbours sliding left/right, L/R switch between
+  All / GBA / GB / GBC, label art on the carts, game name below, user name from `/USERNAME.TXT`
+  in the footer. Three extra themes *Wood*, *Dark* and *Light*. Label art comes from
+  `/LABELS/<rom name>.bmp` (120×80 16-bit BMP, any system) or the `IMGS/` pack (GBA). The classic
+  list is still available (UI settings → *Browser view*). The carousel is **inspired by
+  [slot.](https://github.com/slot-cfw/slot)** and its EZ-Flash Omega port
+  [slot. advance](https://github.com/FrankieT19/slot-advance) (both GPL-3.0); all artwork here is
+  drawn procedurally by our own code, nothing is copied from those projects.
+
+These additions live in `src/coverart.{c,h}`, `src/carousel_gfx.{c,h}`, `src/menu_carousel.h`,
+`src/res/{logo_hq,qr_retroid,tab_icons}.h`, the theme table and render hooks in `src/menu.c`, and the
+`coverart_enable` / `flat_icons` / `browser_view` settings. Carousel previews can be rendered on a PC
+with `tools/carousel/make_previews.sh`.
 
 ## Building
 
