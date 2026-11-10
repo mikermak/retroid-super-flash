@@ -426,7 +426,6 @@ _Static_assert (sizeof(t_rentry) % 4 == 0, "t_rentry must be word-friendly");
 //  - Font data (placed by the bootloader at the 15..16MB range)
 // At the end of the SDRAM, ro-data can be loaded by the loader.
 #define scratch_mem_size (2*1024*1024)
-#define CAR_CACHE_N      8      // Carousel label art cache entries (in SDRAM)
 typedef struct {
   uint8_t scratch[scratch_mem_size];
   t_centry *fileorder[BROWSER_MAXFN_CNT];
@@ -435,10 +434,11 @@ typedef struct {
   t_reg_entry_max nordata;
   uint8_t cover_pix[COVER_W * COVER_H] __attribute__((aligned(4)));   // Decoded cover art
 #ifdef USE_CAROUSEL
-  // Cartridge carousel: filtered file list, label art cache, wood texture.
+  // Cartridge carousel: filtered file list + pre-rendered background.
+  // (The .CRT cartridge cache lives in the scratch area above.)
   uint16_t carlist[BROWSER_MAXFN_CNT];
-  uint8_t carlabels[CAR_CACHE_N][CG_LABEL_W * CG_LABEL_H] __attribute__((aligned(4)));
-  uint8_t woodtex[CG_AREA_H * 240] __attribute__((aligned(4)));
+  uint8_t bgtex[CG_AREA_H * 240] __attribute__((aligned(4)));
+  uint8_t blanks[96 * 1024] __attribute__((aligned(4)));   // Unpacked blank carts
 #endif
 } t_sdram_state;
 
@@ -2357,6 +2357,9 @@ void menu_flip() {
   }
   dma_memset16(&MEM_OAM[objnum*4], 0, 256 - objnum*2);  // Clear unused objects
   REG_DISPCNT = (REG_DISPCNT & ~0x10) | (framen << 4);
+#ifdef USE_CAROUSEL
+  car_flip_palette();     // Carousel palette goes live with its frame
+#endif
   framen ^= 1;
 }
 
@@ -2443,6 +2446,9 @@ void start_flash_update(const char *fn, unsigned fwsize, bool validate_superfw) 
       }
       // Copy (ensure aligned copy!)
       dma_memcpy32(&sdr_state->scratch[i], tmp, 1024);
+#ifdef USE_CAROUSEL
+      car_cache_drop();   // The carousel caches cartridges in this area
+#endif
     }
     spop.p.update.curr_state = FlashingChecking;
     menu_render(1); menu_flip();
@@ -2814,6 +2820,9 @@ static void keypress_popup_norwrite(unsigned newkeys) {
         flashmgr_allocate_blocks(ne.blkmap, blkcnt, (t_reg_entry*)&sdr_state->nordata);
 
         // Go ahead and start the flasher-loader with patching support.
+#ifdef USE_CAROUSEL
+        car_cache_drop();   // The scratch area below holds the carousel cache
+#endif
         unsigned errc = flash_gba_nor(info->romfn, info->romfs, &info->romh, p,
                                       info->use_dsaving, info->ingame_menu_enabled,
                                       info->rtc_patch_enabled,

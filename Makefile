@@ -30,6 +30,8 @@ else ifeq ($(BOARD),chis)
   GLOBAL_DEFINES += -DSUPPORT_NORGAMES -DSUPERCHIS_IO -DFONTS_EXT
   BUNDLE_GBC_EMULATOR = 1
   BUNDLE_OTHER_EMULATORS = 1
+  # Blank 3D cartridges for the carousel (made by tools/library).
+  ASSETFILES += res/carts.bin.comp
   # Can't be over 2MiB (hardlimit)
   MAXFSIZE = 2048
   FWFLAVOUR = "Chis"
@@ -153,7 +155,7 @@ INFILES=src/gba_ewram_crt0.S \
         src/fonts/font_render.c \
         ${FATFSFILES}
 
-all:	$(FWBINFILES) $(BIEMUFILES) directsave.payload ingame_trampoline.payload
+all:	$(FWBINFILES) $(BIEMUFILES) $(ASSETFILES) directsave.payload ingame_trampoline.payload
 	# Wrap the firmware around a ROM->EWRAM loader
 	$(CC) $(CFLAGS) -o firmware.elf rom_boot.S -T ldscripts/gba_romboot.ld -nostartfiles -nostdlib -Wl,--defsym,MAX_FLASH_SIZE=$(MAXFSIZE)K
 	$(OBJCOPY) --output-target=binary firmware.elf superfw.gba
@@ -200,6 +202,9 @@ firmware.ewram.gba.comp:	firmware.ewram.gba ./upkr/target/release/upkr
 
 %.db.comp:	%.db ./upkr/target/release/upkr
 	./upkr/target/release/upkr -l $(COMPRESSION_RATIO) $< $@
+
+res/carts.bin.comp:	res/carts.bin apultra/apultra
+	./apultra/apultra $< $@
 
 %.pack.comp:	%.pack apultra/apultra
 	./apultra/apultra $< $@

@@ -53,10 +53,5 @@ void coverart_draw(volatile uint8_t *frame);
 // (Re)load the 6x6x6 color cube into MEM_PALETTE[20..235].
 void coverart_load_cube(void);
 
-// Cartridge label art for the carousel: decodes the label for a ROM into
-// `dst` (120x80 cube indices, written with 16-bit DMA so it may live in
-// SDRAM). Looks for /LABELS/<rom name>.bmp first, then (GBA only) the
-// /IMGS/ thumbnail by game code. Returns false if there is no label art.
-bool coverart_load_label(const char *rom_fullpath, uint32_t filesize, bool is_gba, void *dst);
 
 #endif

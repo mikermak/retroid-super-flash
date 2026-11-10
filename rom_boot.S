@@ -754,6 +754,15 @@ assets_start:
   .balign 4
   #endif
 
+  #ifdef SUPPORT_NORGAMES
+  .ascii "CART"                                        @ Blank 3D carts (carousel, aplib)
+  .word (carts_end - carts_start)
+  carts_start:
+    .incbin "res/carts.bin.comp"
+  carts_end:
+  .balign 4
+  #endif
+
   .word 0               @ End of asset list
   .word 0
 assets_end:

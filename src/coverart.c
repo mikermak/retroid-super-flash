@@ -15,7 +15,6 @@
 #include "coverart.h"
 
 #define COVER_DIR  "/IMGS"
-#define LABEL_DIR  "/LABELS"
 
 // Big buffers go in EWRAM (.sbss); the default .bss lives in scarce IWRAM.
 #define EWRAM_BSS  __attribute__((section(".sbss")))
@@ -126,39 +125,6 @@ void coverart_load_cube(void) {
   if (!cube_built)
     build_cube();
   dma_memcpy16(&MEM_PALETTE[CUBE_PAL_BASE], cube_pal, CUBE_NCOLORS);
-}
-
-bool coverart_load_label(const char *rom_fullpath, uint32_t filesize, bool is_gba, void *dst) {
-  static int8_t labels_dir = -1;    // Whether /LABELS exists (checked once)
-  bool ok = false;
-
-  if (labels_dir < 0) {
-    FILINFO info;
-    labels_dir = (FR_OK == f_stat(LABEL_DIR, &info) && (info.fattrib & AM_DIR)) ? 1 : 0;
-  }
-
-  // 1) Own label art: /LABELS/<rom file name without extension>.bmp
-  if (labels_dir) {
-    const char *base = strrchr(rom_fullpath, '/');
-    base = base ? base + 1 : rom_fullpath;
-    char path[300];
-    npf_snprintf(path, sizeof(path), "%s/%s", LABEL_DIR, base);
-    char *dot = strrchr(path, '.');
-    if (dot && dot > &path[sizeof(LABEL_DIR)])
-      *dot = 0;
-    if (strlen(path) + 5 <= sizeof(path)) {
-      strcat(path, ".bmp");
-      ok = load_bmp_file(path, (uint8_t*)dst);
-    }
-  }
-
-  // 2) Cover-art thumbnail pack by game code (GBA only).
-  if (!ok && is_gba) {
-    t_rom_header romh;
-    if (0 == preload_gba_rom(rom_fullpath, filesize, &romh) && gcode_is_alnum(romh.gcode))
-      ok = load_cover_file(romh.gcode, (uint8_t*)dst);
-  }
-  return ok;
 }
 
 void coverart_invalidate(void) {

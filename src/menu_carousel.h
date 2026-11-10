@@ -1,35 +1,48 @@
 /*
- * Cartridge carousel ROM browser ("slot."-style skin) -- menu logic.
+ * Cartridge carousel ROM browser ("slot."-style skin) v2 -- menu logic.
  *
  * Included once from menu.c (it needs menu.c's static state). Replaces the
- * SD-card file list on the ROM browser tab when the "Browser view" setting is
- * set to "Carousel"; all other tabs stay as they are. Drawing is done by
- * carousel_gfx.c.
+ * SD-card file list on the ROM browser tab when "Browser view" is set to
+ * "Carousel"; all other tabs stay as they are. Drawing: carousel_gfx.c.
+ *
+ * Every game is shown as a cartridge rendered in 3D on a PC with its real
+ * label (tools/library/maak_bibliotheek.py writes /LIBRARY/ on the SD card):
+ *   GBA:     /LIBRARY/<c>/<GAMECODE>.CRT        (game code from the header)
+ *   GB/GBC:  /LIBRARY/G<h>/<HASH>.CRT           (FNV-1a of header 0x134..0x14F)
+ *   else:    /LIBRARY/N/<rom file name>.CRT
+ * Games without one get a blank 3D cart (built into the firmware) with the
+ * name printed on the label.
  *
  *  - Left/Right: previous/next cart (hold = fast scroll)
- *  - L/R: system filter All / GBA / GB / GBC; past the ends L/R go to the
- *    previous/next tab like before.
+ *  - L/R: system filter All / GBA / GB / GBC (empty ones are skipped); past
+ *    the ends L/R go to the previous/next tab like before.
  *  - A: start the game (or open a folder)
- *  - B: one folder up; in the root folder: start options of the selected game
+ *  - B: one folder up; in the root folder: start options of the game
  *  - Up: start options (GBA load pop-up: saves, patches, cheats, RTC...)
- *  - Select: file manager (delete / hide / write to NOR), as in the list view
+ *  - Select: file manager (delete / hide / write to NOR)
  *  - Start: UI settings tab (B or Start there brings you back)
  *
- * Label art is cached in SDRAM (8 labels), the wood texture is rendered once
- * into SDRAM as well, so the carousel costs almost no EWRAM.
+ * Memory: the .CRT files are cached in the SDRAM scratch area (2 MiB, only
+ * used by firmware updates / NOR writes, after which the cache is dropped);
+ * the background is pre-rendered into SDRAM; EWRAM only holds the code.
  *
  * Copyright (C) 2026 Retroid. GPL-3.0-or-later (same license as SuperFW).
  */
 
 #ifdef USE_CAROUSEL
 
-#define CAR_SPACING     256      // Slide units per cart
-#define CAR_ABS(x)      ((x) < 0 ? -(x) : (x))
-#define CAR_HOLD_DELAY   18      // Frames before auto-repeat kicks in
-#define CAR_SETTLE        4      // Frames without movement before loading art
+#define CAR_HOLD_DELAY   16      // Frames before auto-repeat kicks in
+#define CAR_SETTLE        3      // Frames without movement before loading
+#define CAR_ABS(x)       ((x) < 0 ? -(x) : (x))
+#define CAR_SLOT_SIZE    (48 * 1024)
+#define CAR_SLOTS        (scratch_mem_size / CAR_SLOT_SIZE)
+#define CAR_LIB_DIR      "/LIBRARY"
 
 enum { CarAll = 0, CarGBA, CarGB, CarGBC, CarFiltCNT };
 static const char *const car_filter_names[CarFiltCNT] = { "All", "GBA", "GB", "GBC" };
+
+// Kinds of list entries.
+enum { CarGba = 0, CarGb, CarGbc, CarFolder, CarOther };
 
 // Functions defined further down in menu.c.
 static void browser_open(const char *fn, uint32_t fs);
@@ -37,59 +50,74 @@ static void browser_open_gba(const char *fn, uint32_t fs, bool prompt_patchgen);
 static void browser_reload();
 static void keypress_popup_loadgba(unsigned newkeys);
 const t_emu_loader * get_emu_info(const char *ext);
+const void *get_vfile_ptr(const char *fname);
 int movedir_up();
+
+static uint16_t car_pal[256];     // Palette stage, copied at V-blank (menu_flip)
+static bool car_pal_dirty;
 
 static struct {
   uint8_t filter;           // CarAll..CarGBC
   bool built;               // carlist is valid for (filter, gen)
   bool fading;              // the blend registers are in "fade" mode
-  bool wood_ready;          // wood texture rendered into SDRAM
+  bool via_start;           // UI settings were opened with Start (B returns)
+  int8_t libdir;            // /LIBRARY exists (-1 = not checked yet)
+  int8_t bg_theme;          // Theme the background texture was made for
   unsigned gen;             // browser_gen the list was built for
   int count, pos;           // entries in carlist, selected position
-  int slide;                // animation offset (CAR_SPACING = one cart)
+  int slide;                // animation offset (CG_U_ONE = one cart)
   unsigned hold, repacc;    // Left/Right auto-repeat
   unsigned settle;          // frames since the last move
   int fade;                 // fade-in level (16 = black, 0 = done)
   unsigned lastkeys;        // key state seen on the previous frame
-  bool via_start;           // UI settings were opened with Start (B returns)
+  const t_crt *blank[4];    // Blank carts (GBA, GB, GBC, folder), from flash
   struct {
     uint16_t idx;           // fileorder index
     uint16_t pos;           // carlist position when loaded (eviction hint)
     unsigned gen;           // browser_gen it belongs to
-    uint8_t state;          // 0 = empty, 1 = label art, 2 = no art (generic)
-  } lc[CAR_CACHE_N];
+    uint8_t state;          // 0 = empty, 1 = loaded, 2 = no .CRT for this game
+  } lc[CAR_SLOTS];
   char user[12];            // From /USERNAME.TXT (max 10 chars)
 } car;
 
 static bool carousel_on(void) {
-  return browser_view != 0;
+  return browser_view != 0 && car.blank[0];
 }
 
 static int car_type(const t_centry *e) {
   if (e->isdir)
-    return CG_CART_FOLDER;
+    return CarFolder;
   const char *ext = find_extension(e->fname);
   if (!ext)
     return -1;
   if (!strcasecmp(ext, ".gba"))
-    return CG_CART_GBA;
+    return CarGba;
   if (!strcasecmp(ext, ".gb"))
-    return CG_CART_GB;
+    return CarGb;
   if (!strcasecmp(ext, ".gbc"))
-    return CG_CART_GBC;
+    return CarGbc;
   if (get_emu_info(&ext[1]) || !strcasecmp(ext, ".fw"))
-    return CG_CART_OTHER;   // Other emulated systems + firmware updates ("All")
+    return CarOther;        // Other emulated systems + firmware updates ("All")
   return -1;                // .sav, .txt ... only in the list view
 }
 
 static bool car_match(int type, unsigned filter) {
   if (type < 0)
     return false;
-  if (type == CG_CART_FOLDER || filter == CarAll)
+  if (type == CarFolder || filter == CarAll)
     return true;
-  return (filter == CarGBA && type == CG_CART_GBA) ||
-         (filter == CarGB  && type == CG_CART_GB)  ||
-         (filter == CarGBC && type == CG_CART_GBC);
+  return (filter == CarGBA && type == CarGba) ||
+         (filter == CarGB  && type == CarGb)  ||
+         (filter == CarGBC && type == CarGbc);
+}
+
+static const t_crt *car_blank_for(int type) {
+  switch (type) {
+  case CarGb:     return car.blank[1];
+  case CarGbc:    return car.blank[2];
+  case CarFolder: return car.blank[3] ? car.blank[3] : car.blank[0];
+  default:        return car.blank[0];
+  }
 }
 
 // Keeps the list-browser selection in sync (so popups and the list view work).
@@ -130,8 +158,8 @@ static void car_move(int d) {
   int np = MAX(0, MIN(car.count - 1, car.pos + d));
   if (np == car.pos)
     return;
-  car.slide += (np - car.pos) * CAR_SPACING;
-  car.slide = MAX(-2 * CAR_SPACING, MIN(2 * CAR_SPACING, car.slide));
+  car.slide += (np - car.pos) * CG_U_ONE;
+  car.slide = MAX(-2 * CG_U_ONE, MIN(2 * CG_U_ONE, car.slide));
   car.pos = np;
   car_sync();
 }
@@ -142,7 +170,7 @@ static bool car_filter_has(unsigned filter) {
     return true;
   for (int i = 0; i < smenu.browser.dispentries; i++) {
     int t = car_type(sdr_state->fileorder[i]);
-    if (t != CG_CART_FOLDER && car_match(t, filter))
+    if (t != CarFolder && car_match(t, filter))
       return true;
   }
   return false;
@@ -158,7 +186,7 @@ static bool car_switch_filter(int d) {
     return false;
   car.filter = nf;
   car.built = false;
-  car.slide = d * 2 * CAR_SPACING;    // New row slides in from that side
+  car.slide = d * 2 * CG_U_ONE;     // New row slides in from that side
   return true;
 }
 
@@ -204,6 +232,12 @@ static void car_fade_out(void) {
   car.fade = 16;            // If we come back (error, pop-up), fade back in.
 }
 
+// The SDRAM scratch area was used for something else: drop the cache.
+static void car_cache_drop(void) {
+  for (unsigned i = 0; i < CAR_SLOTS; i++)
+    car.lc[i].state = 0;
+}
+
 static void car_load_user(void) {
   car.user[0] = 0;
   FIL fd;
@@ -229,17 +263,117 @@ static void car_load_user(void) {
 static void car_init(void) {
   car_load_user();
   car.built = false;
+  car.libdir = -1;
+  car.bg_theme = -1;
   car.fade = 16;            // Fade in the first time the carousel shows up
+  car_cache_drop();
+
+  // Blank carts live in the firmware ("CART" asset, aplib compressed). The
+  // asset area is only visible with the SD interface unmapped, so unpack
+  // them into our own SDRAM buffer once.
+  const uint8_t *b = sdr_state->blanks;
+  set_supercard_mode(MAPPED_SDRAM, true, false);
+  const uint8_t *packed = get_vfile_ptr("CART");
+  unsigned unpacked = packed ? apunpack16(packed, sdr_state->blanks) : 0;
+  set_supercard_mode(MAPPED_SDRAM, true, true);
+  if (unpacked > 16 && unpacked <= sizeof(sdr_state->blanks) && !memcmp(b, "RCRB", 4)) {
+    uint32_t n = *(const uint32_t*)&b[4];
+    for (unsigned i = 0; i < n && i < 4; i++) {
+      const t_crt *c = (const t_crt*)&b[*(const uint32_t*)&b[8 + 4 * i]];
+      if (!memcmp(c->magic, "RCRT", 4))
+        car.blank[i] = c;
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
-// Label cache (SDRAM)
+// Library (.CRT) cache
+
+static uint8_t *car_slot_ptr(unsigned i) {
+  return &sdr_state->scratch[i * CAR_SLOT_SIZE];
+}
 
 static int car_cache_find(unsigned idx) {
-  for (unsigned i = 0; i < CAR_CACHE_N; i++)
+  for (unsigned i = 0; i < CAR_SLOTS; i++)
     if (car.lc[i].state && car.lc[i].idx == idx && car.lc[i].gen == browser_gen)
       return i;
   return -1;
+}
+
+static uint32_t car_fnv(const uint8_t *p, unsigned n) {
+  uint32_t h = 0x811C9DC5;
+  while (n--)
+    h = (h ^ *p++) * 0x01000193;
+  return h;
+}
+
+// Path of the key-based .CRT for a ROM (false if there is none).
+static bool car_key_path(const char *rompath, uint32_t fs, int type, char *out, unsigned outsz) {
+  if (type == CarGba) {
+    t_rom_header romh;
+    if (preload_gba_rom(rompath, fs, &romh))
+      return false;
+    for (unsigned i = 0; i < 4; i++) {
+      uint8_t ch = romh.gcode[i];
+      if (!((ch >= '0' && ch <= '9') || (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z')))
+        return false;
+    }
+    char c[5];
+    for (unsigned i = 0; i < 4; i++)
+      c[i] = (romh.gcode[i] >= 'a' && romh.gcode[i] <= 'z') ? romh.gcode[i] - 32 : romh.gcode[i];
+    c[4] = 0;
+    npf_snprintf(out, outsz, CAR_LIB_DIR "/%c/%s.CRT", c[0], c);
+    return true;
+  }
+  if (type == CarGb || type == CarGbc) {
+    FIL fd;
+    if (FR_OK != f_open(&fd, rompath, FA_READ))
+      return false;
+    uint8_t hdr[0x150 - 0x134];
+    UINT rd = 0;
+    bool ok = FR_OK == f_lseek(&fd, 0x134) && FR_OK == f_read(&fd, hdr, sizeof(hdr), &rd) && rd == sizeof(hdr);
+    f_close(&fd);
+    if (!ok)
+      return false;
+    uint32_t h = car_fnv(hdr, sizeof(hdr));
+    npf_snprintf(out, outsz, CAR_LIB_DIR "/G%lX/%08lX.CRT", (unsigned long)(h >> 28), (unsigned long)h);
+    return true;
+  }
+  return false;
+}
+
+// Reads a .CRT into an SDRAM slot (16-bit writes only) and checks it.
+static bool car_read_crt(const char *path, uint8_t *dst) {
+  FIL fd;
+  if (FR_OK != f_open(&fd, path, FA_READ))
+    return false;
+  uint32_t size = f_size(&fd);
+  bool ok = size >= sizeof(t_crt) && size <= CAR_SLOT_SIZE;
+  uint32_t done = 0;
+  while (ok && done < size) {
+    uint32_t buf[256];
+    UINT rd = 0;
+    unsigned chunk = MIN(sizeof(buf), size - done);
+    if (FR_OK != f_read(&fd, buf, chunk, &rd) || rd != chunk)
+      ok = false;
+    else {
+      dma_memcpy16(&dst[done], buf, (chunk + 1) / 2);
+      done += chunk;
+    }
+  }
+  f_close(&fd);
+  if (!ok)
+    return false;
+  const t_crt *c = (const t_crt*)dst;
+  if (memcmp(c->magic, "RCRT", 4) || c->version != 1 || c->npose < CG_POSE_CNT)
+    return false;
+  for (unsigned i = 0; i < CG_POSE_CNT; i++) {
+    const t_crt_pose *p = &c->poses[i];
+    if (p->off + p->size > size || p->ncol > 92 || p->base < 20 || p->base + p->ncol > 240 ||
+        2u * p->ncol + 2u * p->h > p->size)
+      return false;
+  }
+  return true;
 }
 
 static void car_cache_load(int lpos) {
@@ -249,7 +383,7 @@ static void car_cache_load(int lpos) {
 
   // Victim: an empty/stale slot, else the one farthest away from the cursor.
   int v = 0, best = -1;
-  for (unsigned i = 0; i < CAR_CACHE_N; i++) {
+  for (unsigned i = 0; i < CAR_SLOTS; i++) {
     int score = (!car.lc[i].state || car.lc[i].gen != browser_gen) ? 0x7FFF :
                 CAR_ABS((int)car.lc[i].pos - car.pos);
     if (score > best) {
@@ -258,9 +392,28 @@ static void car_cache_load(int lpos) {
     }
   }
 
-  char path[MAX_FN_LEN * 2];
-  npf_snprintf(path, sizeof(path), "%s%s", smenu.browser.cpath, e->fname);
-  bool ok = coverart_load_label(path, e->filesize, type == CG_CART_GBA, sdr_state->carlabels[v]);
+  bool ok = false;
+  if (car.libdir < 0) {
+    FILINFO info;
+    car.libdir = (FR_OK == f_stat(CAR_LIB_DIR, &info) && (info.fattrib & AM_DIR)) ? 1 : 0;
+  }
+  if (car.libdir) {
+    char rompath[MAX_FN_LEN * 2], path[MAX_FN_LEN + 32];
+    npf_snprintf(rompath, sizeof(rompath), "%s%s", smenu.browser.cpath, e->fname);
+    if (car_key_path(rompath, e->filesize, type, path, sizeof(path)))
+      ok = car_read_crt(path, car_slot_ptr(v));
+    if (!ok) {
+      // Fallback: by file name (No-Intro style names, made with --testset).
+      npf_snprintf(path, sizeof(path), CAR_LIB_DIR "/N/%s", e->fname);
+      char *dot = strrchr(path, '.');
+      if (dot && dot > &path[sizeof(CAR_LIB_DIR) + 2])
+        *dot = 0;
+      if (strlen(path) + 5 < sizeof(path)) {
+        strcat(path, ".CRT");
+        ok = car_read_crt(path, car_slot_ptr(v));
+      }
+    }
+  }
 
   car.lc[v].idx = idx;
   car.lc[v].pos = lpos;
@@ -268,7 +421,7 @@ static void car_cache_load(int lpos) {
   car.lc[v].state = ok ? 1 : 2;
 }
 
-// Loads (at most) one missing label per frame: center first, then neighbours.
+// Loads (at most) one missing game per frame: centre first, then neighbours.
 static void car_cache_step(void) {
   static const int8_t order[5] = { 0, 1, -1, 2, -2 };
   for (unsigned i = 0; i < 5; i++) {
@@ -276,8 +429,9 @@ static void car_cache_step(void) {
     if (lp < 0 || lp >= car.count)
       continue;
     unsigned idx = sdr_state->carlist[lp];
-    if (sdr_state->fileorder[idx]->isdir)
-      continue;             // Folders have no label
+    int type = car_type(sdr_state->fileorder[idx]);
+    if (type == CarFolder || type == CarOther)
+      continue;             // Always shown as blank carts
     if (car_cache_find(idx) < 0) {
       car_cache_load(lp);
       return;
@@ -300,15 +454,16 @@ static void car_title(const t_centry *e, char *out, unsigned outsz) {
 
 static void render_carousel(volatile uint8_t *frame, unsigned fcnt) {
   car_ensure();
-  coverart_load_cube();
 
-  if (menu_theme == THEME_WOOD && !car.wood_ready) {
+  const unsigned th = menu_theme < CG_THEME_CNT ? menu_theme : 0;
+  const t_cg_theme *theme = &cg_themes[th];
+  if (car.bg_theme != (int)th) {
     uint8_t row[SCREEN_WIDTH] __attribute__((aligned(4)));
     for (unsigned y = 0; y < CG_AREA_H; y++) {
-      cg_wood_row(row, y);
-      dma_memcpy16(&sdr_state->woodtex[y * SCREEN_WIDTH], row, SCREEN_WIDTH / 2);
+      cg_bg_row(theme, row, y);
+      dma_memcpy16(&sdr_state->bgtex[y * SCREEN_WIDTH], row, SCREEN_WIDTH / 2);
     }
-    car.wood_ready = true;
+    car.bg_theme = th;
   }
 
   // Hold Left/Right to scroll fast.
@@ -317,7 +472,7 @@ static void render_carousel(volatile uint8_t *frame, unsigned fcnt) {
   if (lr && car.count) {
     car.hold += fcnt;
     if (car.hold > CAR_HOLD_DELAY) {
-      unsigned period = car.hold > 90 ? 2 : 4;
+      unsigned period = car.hold > 80 ? 3 : 6;
       car.repacc += fcnt;
       while (car.repacc >= period) {
         car.repacc -= period;
@@ -329,11 +484,12 @@ static void render_carousel(volatile uint8_t *frame, unsigned fcnt) {
     car.repacc = 0;
   }
 
-  // Slide animation (ease out).
+  // Slide animation (ease out over ~8 frames).
   for (unsigned i = 0; i < fcnt && car.slide; i++) {
-    car.slide = (car.slide * 5) / 8;
-    if (CAR_ABS(car.slide) < 6)
-      car.slide = 0;
+    int step = car.slide / 4;
+    if (CAR_ABS(step) < 8)
+      step = car.slide < 0 ? -MIN(8, -car.slide) : MIN(8, car.slide);
+    car.slide -= step;
   }
   car.settle += fcnt;
 
@@ -347,18 +503,21 @@ static void render_carousel(volatile uint8_t *frame, unsigned fcnt) {
       car_fade_stop();
   }
 
-  // Load label art once the cursor stopped moving.
+  // Load cartridges once the cursor stopped moving.
   if (car.settle >= CAR_SETTLE && car.count && !car.hold)
     car_cache_step();
 
   // Build the scene.
   t_cg_scene s;
   memset(&s, 0, sizeof(s));
-  char titles[CG_MAX_CARTS][96];
-  char counter[24];
+  char titles[5][96];
+  char counter[24], players[16];
+  t_cg_item items[5];
+  memset(items, 0, sizeof(items));
 
-  s.bgstyle = (menu_theme == THEME_WOOD && car.wood_ready) ? CG_BG_WOOD : CG_BG_SOLID;
-  s.woodtex = sdr_state->woodtex;
+  s.theme = theme;
+  s.bgtex = sdr_state->bgtex;
+  s.pal = car_pal;
   s.nfilters = CarFiltCNT;
   s.filter = car.filter;
   s.filter_names = car_filter_names;
@@ -366,36 +525,61 @@ static void render_carousel(volatile uint8_t *frame, unsigned fcnt) {
   s.header_minx = (MENUTAB_MAX - mintab) * 16 + 2;
   s.user = car.user;
   s.path = smenu.browser.cpath;
-  s.clock = NULL;           // The cart has no RTC the menu can read: no clock.
+  cg_theme_palette(theme, car_pal);
 
   if (!car.count) {
     s.message = msgs[lang_id][MSG_BROW_EMPTY];
     npf_snprintf(counter, sizeof(counter), "0/0");
   } else {
     npf_snprintf(counter, sizeof(counter), "%d/%d", car.pos + 1, car.count);
-    int slide100 = (car.slide * 100) / CAR_SPACING;
-    for (int k = -3; k <= 3; k++) {
+    for (int k = -2; k <= 2; k++) {
       int lp = car.pos + k;
-      int x100 = k * 100 + slide100;
-      if (lp < 0 || lp >= car.count || x100 < -260 || x100 > 260)
+      if (lp < 0 || lp >= car.count)
         continue;
       unsigned idx = sdr_state->carlist[lp];
       const t_centry *e = sdr_state->fileorder[idx];
-      t_cg_cart *c = &s.carts[s.ncarts];
-      car_title(e, titles[s.ncarts], sizeof(titles[0]));
+      t_cg_item *it = &items[k + 2];
       int ci = car_cache_find(idx);
-      c->x100 = x100;
-      c->type = car_type(e);
-      c->title = titles[s.ncarts];
-      c->label = (ci >= 0 && car.lc[ci].state == 1) ? sdr_state->carlabels[ci] : NULL;
-      if (!k)
-        s.name = titles[s.ncarts];
-      s.ncarts++;
+      if (ci >= 0 && car.lc[ci].state == 1) {
+        it->crt = (const t_crt*)car_slot_ptr(ci);
+        it->blank = false;
+        strncpy(titles[k + 2], it->crt->title[0] ? it->crt->title : e->fname, sizeof(titles[0]) - 1);
+        titles[k + 2][sizeof(titles[0]) - 1] = 0;
+      } else {
+        it->crt = car_blank_for(car_type(e));
+        it->blank = true;
+        car_title(e, titles[k + 2], sizeof(titles[0]));
+      }
+      it->title = titles[k + 2];
+    }
+    cg_place(&s, items, car.slide);
+    if (items[2].crt) {
+      s.name = items[2].title;
+      if (!items[2].blank) {
+        const t_crt *c = items[2].crt;
+        s.meta[0] = c->year;
+        s.meta[1] = c->publisher;
+        if (c->players[0]) {
+          npf_snprintf(players, sizeof(players), "%s %s", c->players,
+                       strcmp(c->players, "1") ? "players" : "player");
+          s.meta[2] = players;
+        }
+      }
     }
   }
   s.counter = counter;
 
   cg_render_scene(frame, &s);
+  car_pal_dirty = true;     // Swapped in at V-blank together with this frame
+}
+
+// Copies the staged palette (called from menu_flip, during V-blank).
+static void car_flip_palette(void) {
+  if (!car_pal_dirty)
+    return;
+  dma_memcpy16(&MEM_PALETTE[1], &car_pal[1], 15);
+  dma_memcpy16(&MEM_PALETTE[20], &car_pal[20], 220);
+  car_pal_dirty = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -410,7 +594,7 @@ static void car_open_selected(bool options) {
 
   if (options) {
     // Start options: the regular GBA load pop-up (saves, patches, cheats...).
-    if (type == CG_CART_GBA)
+    if (type == CarGba)
       browser_open_gba(path, e->filesize, true);
     return;
   }
@@ -418,7 +602,7 @@ static void car_open_selected(bool options) {
   const char *ext = find_extension(path);
   if (!ext || strcasecmp(ext, ".fw"))
     car_fade_out();         // No fade for the firmware update pop-up
-  if (type == CG_CART_GBA) {
+  if (type == CarGba) {
     browser_open_gba(path, e->filesize, true);
     // No questions asked (patch prompt / errors)? Then press "Load" for the user.
     if (spop.pop_num == POPUP_GBA_LOAD && !spop.qpop.message && !spop.alert_msg) {
@@ -432,7 +616,6 @@ static void car_open_selected(bool options) {
 
 static void car_keypress(unsigned keys) {
   unsigned newkeys = keys & ~car.lastkeys;   // Only freshly pressed buttons
-
   car_ensure();
 
   if (newkeys & KEY_BUTTSTA) {

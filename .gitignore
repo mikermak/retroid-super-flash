@@ -15,3 +15,10 @@ src/menu_messages.h
 src/messages_data.h
 __pycache__/
 *.pyc
+
+# Game library (carousel v2): label scans + renders are copyrighted, keep local
+preview/v2/
+/LIBRARY/
+/library-db/
+*.crt
+*.CRT
