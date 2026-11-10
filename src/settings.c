@@ -67,6 +67,7 @@ uint32_t lang_id = 0;
 uint32_t recent_menu = 1;
 uint32_t coverart_enable = 1;   // show cover-art / title-screen preview in the browser
 uint32_t flat_icons = 1;        // flat white tab icons (1) vs original colored icons (0)
+uint32_t browser_view = 1;      // ROM browser: 0 = classic list, 1 = cartridge carousel (lite/chis)
 uint32_t hide_hidden = 0;
 uint32_t anim_speed = animspd_cnt / 2;
 
@@ -115,8 +116,10 @@ bool save_ui_settings() {
     "anim_speed=%lu\n"
     "hide_hidden=%lu\n"
     "coverart=%lu\n"
-    "flaticons=%lu\n",
-    menu_theme, (lc & 0xFF), (lc >> 8), recent_menu, anim_speed, hide_hidden, coverart_enable, flat_icons);
+    "flaticons=%lu\n"
+    "view=%lu\n",
+    menu_theme, (lc & 0xFF), (lc >> 8), recent_menu, anim_speed, hide_hidden, coverart_enable, flat_icons,
+    browser_view);
 
   UINT wrbytes;
   FRESULT res = f_write(&fd, buf, strlen(buf), &wrbytes);
@@ -221,6 +224,8 @@ static void parse_ui_settings(void *usr, const char *var, const char *value) {
     coverart_enable = valu;
   else if (!strcmp(var, "flaticons"))
     flat_icons = valu;
+  else if (!strcmp(var, "view"))
+    browser_view = valu & 1;
   else if (!strcmp(var, "langcode")) {
     uint16_t code = ((uint8_t)value[0]) | (((uint8_t)value[1]) << 8);
     lang_id = lang_lookup(code);

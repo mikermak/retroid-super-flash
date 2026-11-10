@@ -36,6 +36,7 @@
 #include "sha256.h"
 #include "supercard_driver.h"
 #include "coverart.h"
+#include "carousel_gfx.h"
 
 #include "res/icons.h"
 #include "res/tab_icons.h"
@@ -109,9 +110,27 @@ enum {
   UiSetHid   = 4,
   UiSetCover = 5,
   UiSetFlat  = 6,
+#ifdef USE_CAROUSEL
+  UiSetView  = 7,
+  UiSetSave  = 8,
+  UiSetMAX   = 8,
+#else
   UiSetSave  = 7,
   UiSetMAX   = 7,
+#endif
 };
+
+// UI settings rows: a bit tighter when the extra "Browser view" row exists.
+#ifdef USE_CAROUSEL
+  #define UIS_Y0   19
+  #define UIS_SP   15
+  #define UIS_SAVE_Y 142
+#else
+  #define UIS_Y0   22
+  #define UIS_SP   17
+  #define UIS_SAVE_Y 140
+#endif
+#define UIS_Y(i)  (UIS_Y0 + (i) * UIS_SP)
 
 enum {
   ToolsSDRAMTest = 0,
@@ -222,9 +241,15 @@ const struct {
   { RGB2GBA(0xcc1f2d), RGB2GBA(0x0c0c10), RGB2GBA(0xf2f2f2), RGB2GBA(0x6651c4), RGB2GBA(0x4a3aa6), RGB2GBA(0x7a5560) }, // Red / Dark
   // Red / White: red bars, white bg, near-black text, light-red selection tint.
   { RGB2GBA(0xcc1f2d), RGB2GBA(0xf4f4f4), RGB2GBA(0x1a1a1a), RGB2GBA(0xf0b8bc), RGB2GBA(0xcc1f2d), RGB2GBA(0x9a9a9a) }, // Red / White
+  // Carousel themes (also used by the rest of the menu). Wood draws a wood
+  // grain texture behind the cartridges. Keep in sync with tools/carousel/.
+  { RGB2GBA(0x4a2c17), RGB2GBA(0x7a4e2c), RGB2GBA(0xf6e7c8), RGB2GBA(0xc98a3c), RGB2GBA(0xa8692a), RGB2GBA(0x6b4a33) }, // Wood
+  { RGB2GBA(0x30303a), RGB2GBA(0x111116), RGB2GBA(0xececf0), RGB2GBA(0x3d6fc4), RGB2GBA(0x2d5aa8), RGB2GBA(0x5a5a66) }, // Dark
+  { RGB2GBA(0x5b6170), RGB2GBA(0xe9e9ee), RGB2GBA(0x1b1b22), RGB2GBA(0xa9c8f2), RGB2GBA(0x6f9fe0), RGB2GBA(0xa3a3ad) }, // Light
 };
 #define THEME_COUNT (sizeof(themes) / sizeof(themes[0]))
-static const char *const theme_names[THEME_COUNT] = { "Red/Dark", "Red/White" };
+#define THEME_WOOD  2
+static const char *const theme_names[THEME_COUNT] = { "Red/Dark", "Red/White", "Wood", "Dark", "Light" };
 
 typedef struct {
   // ROM information
@@ -401,12 +426,20 @@ _Static_assert (sizeof(t_rentry) % 4 == 0, "t_rentry must be word-friendly");
 //  - Font data (placed by the bootloader at the 15..16MB range)
 // At the end of the SDRAM, ro-data can be loaded by the loader.
 #define scratch_mem_size (2*1024*1024)
+#define CAR_CACHE_N      8      // Carousel label art cache entries (in SDRAM)
 typedef struct {
   uint8_t scratch[scratch_mem_size];
   t_centry *fileorder[BROWSER_MAXFN_CNT];
   t_centry fentries[BROWSER_MAXFN_CNT];
   t_rentry rentries[RECENT_MAXFN_CNT];
   t_reg_entry_max nordata;
+  uint8_t cover_pix[COVER_W * COVER_H] __attribute__((aligned(4)));   // Decoded cover art
+#ifdef USE_CAROUSEL
+  // Cartridge carousel: filtered file list, label art cache, wood texture.
+  uint16_t carlist[BROWSER_MAXFN_CNT];
+  uint8_t carlabels[CAR_CACHE_N][CG_LABEL_W * CG_LABEL_H] __attribute__((aligned(4)));
+  uint8_t woodtex[CG_AREA_H * 240] __attribute__((aligned(4)));
+#endif
 } t_sdram_state;
 
 _Static_assert (sizeof(t_sdram_state) <= 14.5*1024*1024, "scratch SDRAM doesn't exceed 14.5MB");
@@ -423,6 +456,14 @@ static bool enable_flashing = false;
 static unsigned framen = 0;
 static unsigned objnum = 0;
 static t_oamobj fobjs[64];
+
+static unsigned browser_gen;      // Bumped whenever the browser file list changes
+static unsigned menu_fcnt = 1;    // Frame delta of the frame being rendered
+// The carousel is compiled for size: EWRAM (code + data) is very tight.
+#pragma GCC push_options
+#pragma GCC optimize ("Os")
+#include "menu_carousel.h"
+#pragma GCC pop_options
 
 unsigned lang_lookup(uint16_t code) {
   for (unsigned i = 0; i < LANG_COUNT; i++)
@@ -1188,6 +1229,7 @@ static void browser_reload_filter() {
     smenu.browser.selector = fcount - 1;
   smenu.browser.seloff = MAX(0, smenu.browser.selector - BROWSER_ROWS / 2);
   smenu.browser.dispentries = fcount;
+  browser_gen++;
 }
 
 // Loads a new directory list in the ROM browser.
@@ -1517,6 +1559,13 @@ void render_flashbrowser(volatile uint8_t *frame) {
 #endif
 
 void render_browser(volatile uint8_t *frame) {
+#ifdef USE_CAROUSEL
+  if (carousel_on()) {
+    render_carousel(frame, menu_fcnt);
+    return;
+  }
+#endif
+
   // Render bar below to show path URI
   dma_memset16(&frame[240*144], dup8(FG_COLOR), 240*16/2);
 
@@ -2059,35 +2108,40 @@ void render_ui_settings(volatile uint8_t *frame) {
   const unsigned colx = 170;
   char tmpbuf[64];
   npf_snprintf(tmpbuf, sizeof(tmpbuf), "< %s >", theme_names[menu_theme < THEME_COUNT ? menu_theme : 0]);
-  draw_text_ovf(msgs[lang_id][MSG_UIS_THEME], frame, 8, 22, 224);
-  draw_central_text(tmpbuf, frame, colx, 22 );
+  draw_text_ovf(msgs[lang_id][MSG_UIS_THEME], frame, 8, UIS_Y(UiSetTheme), 224);
+  draw_central_text(tmpbuf, frame, colx, UIS_Y(UiSetTheme));
 
   npf_snprintf(tmpbuf, sizeof(tmpbuf), "< %s >", msgs[lang_id][MSG_LANG_NAME]);
-  draw_text_ovf(msgs[lang_id][MSG_UIS_LANG], frame, 8, 39, 224);
-  draw_central_text(tmpbuf, frame, colx, 39 );
+  draw_text_ovf(msgs[lang_id][MSG_UIS_LANG], frame, 8, UIS_Y(UiSetLang), 224);
+  draw_central_text(tmpbuf, frame, colx, UIS_Y(UiSetLang));
 
-  draw_text_ovf(msgs[lang_id][MSG_UIS_RECNT], frame, 8, 56, 224);
-  draw_central_text(msgs[lang_id][recent_menu ? MSG_KNOB_ENABLED : MSG_KNOB_DISABLED], frame, colx, 56 );
+  draw_text_ovf(msgs[lang_id][MSG_UIS_RECNT], frame, 8, UIS_Y(UiSetRect), 224);
+  draw_central_text(msgs[lang_id][recent_menu ? MSG_KNOB_ENABLED : MSG_KNOB_DISABLED], frame, colx, UIS_Y(UiSetRect));
 
   npf_snprintf(tmpbuf, sizeof(tmpbuf), "< %s >", msgs[lang_id][MSG_UIS_SPD0 + anim_speed]);
-  draw_text_ovf(msgs[lang_id][MSG_UIS_ANSPD], frame, 8, 73, 224);
-  draw_central_text(tmpbuf, frame, colx, 73 );
+  draw_text_ovf(msgs[lang_id][MSG_UIS_ANSPD], frame, 8, UIS_Y(UiSetASpd), 224);
+  draw_central_text(tmpbuf, frame, colx, UIS_Y(UiSetASpd));
 
-  draw_text_ovf(msgs[lang_id][MSG_UIS_BHID], frame, 8, 90, 224);
-  draw_central_text(msgs[lang_id][hide_hidden ? MSG_KNOB_DISABLED : MSG_KNOB_ENABLED], frame, colx, 90 );
+  draw_text_ovf(msgs[lang_id][MSG_UIS_BHID], frame, 8, UIS_Y(UiSetHid), 224);
+  draw_central_text(msgs[lang_id][hide_hidden ? MSG_KNOB_DISABLED : MSG_KNOB_ENABLED], frame, colx, UIS_Y(UiSetHid));
 
-  draw_text_ovf(msgs[lang_id][MSG_UIS_COVER], frame, 8, 107, 224);
-  draw_central_text(msgs[lang_id][coverart_enable ? MSG_KNOB_ENABLED : MSG_KNOB_DISABLED], frame, colx, 107 );
+  draw_text_ovf(msgs[lang_id][MSG_UIS_COVER], frame, 8, UIS_Y(UiSetCover), 224);
+  draw_central_text(msgs[lang_id][coverart_enable ? MSG_KNOB_ENABLED : MSG_KNOB_DISABLED], frame, colx, UIS_Y(UiSetCover));
 
-  draw_text_ovf(msgs[lang_id][MSG_UIS_FLAT], frame, 8, 124, 224);
-  draw_central_text(msgs[lang_id][flat_icons ? MSG_KNOB_ENABLED : MSG_KNOB_DISABLED], frame, colx, 124 );
+  draw_text_ovf(msgs[lang_id][MSG_UIS_FLAT], frame, 8, UIS_Y(UiSetFlat), 224);
+  draw_central_text(msgs[lang_id][flat_icons ? MSG_KNOB_ENABLED : MSG_KNOB_DISABLED], frame, colx, UIS_Y(UiSetFlat));
+
+#ifdef USE_CAROUSEL
+  draw_text_ovf(msgs[lang_id][MSG_UIS_VIEW], frame, 8, UIS_Y(UiSetView), 224);
+  draw_central_text(browser_view ? "< Carousel >" : "< List >", frame, colx, UIS_Y(UiSetView));
+#endif
 
   if (smenu.uiset.selector != UiSetSave)
     for (unsigned i = 0; i < 240; i += 16)
-      render_icon_trans(i, 22 + smenu.uiset.selector * 17, 63);
+      render_icon_trans(i, UIS_Y(smenu.uiset.selector), 63);
 
-  draw_button_box(frame, 20, 220, 140, 156, smenu.uiset.selector == UiSetSave);
-  draw_central_text(msgs[lang_id][MSG_UIS_SAVE], frame, 120, 142);
+  draw_button_box(frame, 20, 220, UIS_SAVE_Y, UIS_SAVE_Y + 16, smenu.uiset.selector == UiSetSave);
+  draw_central_text(msgs[lang_id][MSG_UIS_SAVE], frame, 120, UIS_SAVE_Y + 2);
 }
 
 void render_info(volatile uint8_t *frame) {
@@ -2233,6 +2287,7 @@ static const struct {
 // previous rendered frame (for animations and similar stuff).
 void menu_render(unsigned fcnt) {
   objnum = 0;
+  menu_fcnt = fcnt;
   volatile uint8_t *frame = &MEM_VRAM_U8[0xA000*framen];
 
   // Render the tab menu on top (rows 0..15), highlighting the selected option
@@ -2248,6 +2303,14 @@ void menu_render(unsigned fcnt) {
 
   // Render the main area
   dma_memset16(&frame[16*SCREEN_WIDTH], dup8(BG_COLOR), SCREEN_WIDTH*(SCREEN_HEIGHT-16) / 2);
+
+#ifdef USE_CAROUSEL
+  // Stop a carousel fade-in if something else is shown now.
+  if (car.fade && !(smenu.menu_tab == MENUTAB_ROMBROWSE && carousel_on() && !spop.qpop.message &&
+                    !spop.rtcpop.callback && !spop.pop_num))
+    car_fade_stop();
+  car.lastkeys = (~REG_KEYINPUT) & 0x3FF;
+#endif
 
   if (spop.qpop.message)
     render_popupq(frame, fcnt);
@@ -2302,6 +2365,9 @@ void menu_init(int sram_testres) {
   memset(&smenu, 0, sizeof(smenu));
   memset(&spop, 0, sizeof(spop));
 
+  // Cover art is decoded into SDRAM (saves EWRAM).
+  coverart_init(sdr_state->cover_pix);
+
   // Reset the file browser as well.
   strcpy(smenu.browser.cpath, "/");
   browser_reload();
@@ -2313,6 +2379,10 @@ void menu_init(int sram_testres) {
   if (menu_theme >= THEME_COUNT)   // stale saved theme index (theme list was reduced)
     menu_theme = 0;
   reload_theme(menu_theme);
+
+#ifdef USE_CAROUSEL
+  car_init();
+#endif
 
   smenu.menu_tab = (recent_menu && smenu.recent.maxentries) ? MENUTAB_RECENT : MENUTAB_ROMBROWSE;
 
@@ -3035,6 +3105,12 @@ static void keypress_menu_recent(unsigned newkeys) {
 }
 
 static void keypress_menu_browse(unsigned newkeys) {
+#ifdef USE_CAROUSEL
+  if (carousel_on()) {
+    car_keypress(newkeys);
+    return;
+  }
+#endif
   if (smenu.browser.dispentries) {
     // Move menu up and down
     if (newkeys & KEY_BUTTUP)
@@ -3237,6 +3313,14 @@ static void keypress_menu_settings(unsigned newkeys) {
 }
 
 static void keypress_menu_uisettings(unsigned newkeys) {
+#ifdef USE_CAROUSEL
+  // Opened from the carousel with Start: B (or a new Start press) goes back.
+  if (car.via_start && (newkeys & ~car.lastkeys & (KEY_BUTTB | KEY_BUTTSTA))) {
+    car.via_start = false;
+    smenu.menu_tab = MENUTAB_ROMBROWSE;
+    return;
+  }
+#endif
   if (newkeys & KEY_BUTTUP)
     smenu.uiset.selector = MAX(0, smenu.uiset.selector - 1);
   if (newkeys & KEY_BUTTDOWN)
@@ -3254,6 +3338,10 @@ static void keypress_menu_uisettings(unsigned newkeys) {
       coverart_enable ^= 1;
     else if (smenu.uiset.selector == UiSetFlat)
       flat_icons ^= 1;
+#ifdef USE_CAROUSEL
+    else if (smenu.uiset.selector == UiSetView)
+      browser_view ^= 1;
+#endif
     else if (smenu.uiset.selector == UiSetLang)
       lang_id = (lang_id + LANG_COUNT - 1) % LANG_COUNT;
   }
@@ -3270,6 +3358,10 @@ static void keypress_menu_uisettings(unsigned newkeys) {
       coverart_enable ^= 1;
     else if (smenu.uiset.selector == UiSetFlat)
       flat_icons ^= 1;
+#ifdef USE_CAROUSEL
+    else if (smenu.uiset.selector == UiSetView)
+      browser_view ^= 1;
+#endif
     else if (smenu.uiset.selector == UiSetLang)
       lang_id = (lang_id + 1) % LANG_COUNT;
   }
@@ -3444,10 +3536,31 @@ void menu_keypress(unsigned newkeys) {
   } else {
     // Menu change via trigger buttons
     int mintab = (recent_menu && smenu.recent.maxentries) ? MENUTAB_RECENT : MENUTAB_ROMBROWSE;
-    if (newkeys & KEY_BUTTL)
+    bool lr_used = false;
+#ifdef USE_CAROUSEL
+    // In the carousel L/R first walk through the systems (All/GBA/GB/GBC).
+    if (smenu.menu_tab == MENUTAB_ROMBROWSE && carousel_on() && (newkeys & (KEY_BUTTL | KEY_BUTTR))) {
+      unsigned fresh = newkeys & ~car.lastkeys;
+      if (fresh & (KEY_BUTTL | KEY_BUTTR))
+        lr_used = car_switch_filter((fresh & KEY_BUTTL) ? -1 : 1);
+      else
+        lr_used = true;     // Still held from before (another button changed): ignore
+    }
+    const unsigned prevtab = smenu.menu_tab;
+#endif
+    if (lr_used) {
+      // handled by the carousel (system switch)
+    }
+    else if (newkeys & KEY_BUTTL)
       smenu.menu_tab = MAX((int)smenu.menu_tab - 1, mintab);
     else if (newkeys & KEY_BUTTR)
       smenu.menu_tab = MIN(smenu.menu_tab + 1, MENUTAB_MAX - 1);
+#ifdef USE_CAROUSEL
+    if (prevtab != smenu.menu_tab)
+      car.via_start = false;
+    if (smenu.menu_tab == MENUTAB_ROMBROWSE && prevtab != MENUTAB_ROMBROWSE && carousel_on())
+      car_enter_tab(prevtab > MENUTAB_ROMBROWSE);
+#endif
 
     if (newkeys & (KEY_BUTTL | KEY_BUTTR | KEY_BUTTUP | KEY_BUTTDOWN))
       smenu.anim_state = 0;

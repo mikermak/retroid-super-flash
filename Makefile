@@ -129,6 +129,7 @@ INFILES=src/gba_ewram_crt0.S \
         src/patches.S \
         src/menu.c \
         src/coverart.c \
+        src/carousel_gfx.c \
         src/cheats.c \
         src/flash.c \
         src/sha256.c \

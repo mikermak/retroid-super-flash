@@ -82,6 +82,7 @@ en_strings = [
   "MSG_UIS_BHID":  "Show hidden files",
   "MSG_UIS_COVER": "Cover art",
   "MSG_UIS_FLAT":  "Flat icons",
+  "MSG_UIS_VIEW":  "Browser view",
   "MSG_UIS_SAVE":  "Save to SD card",
 
   "MSG_UIS_SPD0":  "Very slow",

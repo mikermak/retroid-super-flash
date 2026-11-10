@@ -15,11 +15,14 @@
 #include "coverart.h"
 
 #define COVER_DIR  "/IMGS"
+#define LABEL_DIR  "/LABELS"
 
 // Big buffers go in EWRAM (.sbss); the default .bss lives in scarce IWRAM.
 #define EWRAM_BSS  __attribute__((section(".sbss")))
 
-static EWRAM_BSS __attribute__((aligned(4))) uint8_t cover_pix[COVER_W * COVER_H];
+// The decoded cover lives in the cart's SDRAM (EWRAM is nearly full). SDRAM
+// only takes 16/32-bit writes, so all writes below go through DMA16.
+static uint8_t *cover_pix;
 static EWRAM_BSS char cover_key[512];     // ROM path the current state belongs to
 static bool     cover_have;               // a valid cover is loaded (.bss/IWRAM -> zeroed)
 static uint16_t cube_pal[CUBE_NCOLORS];   // the fixed color cube (GBA BGR555)
@@ -54,12 +57,8 @@ static bool gcode_is_alnum(const uint8_t *c) {
   return true;
 }
 
-static bool load_cover_file(const uint8_t gcode[4]) {
-  char path[64];
-  npf_snprintf(path, sizeof(path), "%s/%c/%c/%c%c%c%c.bmp",
-               COVER_DIR, gcode[0], gcode[1],
-               gcode[0], gcode[1], gcode[2], gcode[3]);
-
+// Decodes a 120x80 (or smaller) 16bpp BMP into `dst` (120x80, 16-bit writes).
+static bool load_bmp_file(const char *path, uint8_t *dst) {
   FIL fd;
   if (FR_OK != f_open(&fd, path, FA_READ))
     return false;
@@ -83,10 +82,11 @@ static bool load_cover_file(const uint8_t gcode[4]) {
         build_cube();
 
       // Pad letterbox (smaller images) with cube index 0 (= black).
-      memset(cover_pix, CUBE_PAL_BASE, sizeof(cover_pix));
+      dma_memset16(dst, dup8(CUBE_PAL_BASE), COVER_W * COVER_H / 2);
 
       unsigned rowbytes = ((unsigned)width * 2 + 3) & ~3u;   // 4-byte aligned rows
       uint8_t rowbuf[COVER_W * 2];
+      uint8_t line[COVER_W] __attribute__((aligned(4)));
       ok = true;
       for (int sy = 0; sy < height; sy++) {
         if (FR_OK != f_read(&fd, rowbuf, rowbytes, &rd) || rd != rowbytes) {
@@ -94,9 +94,10 @@ static bool load_cover_file(const uint8_t gcode[4]) {
           break;
         }
         unsigned dy = topdown ? (unsigned)sy : (unsigned)(height - 1 - sy);
-        uint8_t *dst = &cover_pix[dy * COVER_W];
+        memset(line, CUBE_PAL_BASE, sizeof(line));
         for (int x = 0; x < width; x++)
-          dst[x] = rgb555_to_cube(rowbuf[x * 2] | (rowbuf[x * 2 + 1] << 8));
+          line[x] = rgb555_to_cube(rowbuf[x * 2] | (rowbuf[x * 2 + 1] << 8));
+        dma_memcpy16(&dst[dy * COVER_W], line, COVER_W / 2);
       }
 
       if (ok)
@@ -105,6 +106,58 @@ static bool load_cover_file(const uint8_t gcode[4]) {
   }
 
   f_close(&fd);
+  return ok;
+}
+
+static bool load_cover_file(const uint8_t gcode[4], uint8_t *dst) {
+  char path[64];
+  npf_snprintf(path, sizeof(path), "%s/%c/%c/%c%c%c%c.bmp",
+               COVER_DIR, gcode[0], gcode[1],
+               gcode[0], gcode[1], gcode[2], gcode[3]);
+  return load_bmp_file(path, dst);
+}
+
+void coverart_init(void *sdram_buf) {
+  cover_pix = (uint8_t*)sdram_buf;
+  coverart_invalidate();
+}
+
+void coverart_load_cube(void) {
+  if (!cube_built)
+    build_cube();
+  dma_memcpy16(&MEM_PALETTE[CUBE_PAL_BASE], cube_pal, CUBE_NCOLORS);
+}
+
+bool coverart_load_label(const char *rom_fullpath, uint32_t filesize, bool is_gba, void *dst) {
+  static int8_t labels_dir = -1;    // Whether /LABELS exists (checked once)
+  bool ok = false;
+
+  if (labels_dir < 0) {
+    FILINFO info;
+    labels_dir = (FR_OK == f_stat(LABEL_DIR, &info) && (info.fattrib & AM_DIR)) ? 1 : 0;
+  }
+
+  // 1) Own label art: /LABELS/<rom file name without extension>.bmp
+  if (labels_dir) {
+    const char *base = strrchr(rom_fullpath, '/');
+    base = base ? base + 1 : rom_fullpath;
+    char path[300];
+    npf_snprintf(path, sizeof(path), "%s/%s", LABEL_DIR, base);
+    char *dot = strrchr(path, '.');
+    if (dot && dot > &path[sizeof(LABEL_DIR)])
+      *dot = 0;
+    if (strlen(path) + 5 <= sizeof(path)) {
+      strcat(path, ".bmp");
+      ok = load_bmp_file(path, (uint8_t*)dst);
+    }
+  }
+
+  // 2) Cover-art thumbnail pack by game code (GBA only).
+  if (!ok && is_gba) {
+    t_rom_header romh;
+    if (0 == preload_gba_rom(rom_fullpath, filesize, &romh) && gcode_is_alnum(romh.gcode))
+      ok = load_cover_file(romh.gcode, (uint8_t*)dst);
+  }
   return ok;
 }
 
@@ -130,7 +183,7 @@ void coverart_update(const char *rom_fullpath, uint32_t filesize, bool is_gba) {
     return;
 
   if (gcode_is_alnum(romh.gcode))
-    cover_have = load_cover_file(romh.gcode);
+    cover_have = load_cover_file(romh.gcode, cover_pix);
 }
 
 void coverart_update_gcode(const char *cachekey, const uint8_t gcode[4]) {
@@ -142,15 +195,15 @@ void coverart_update_gcode(const char *cachekey, const uint8_t gcode[4]) {
   cover_have = false;
 
   if (gcode_is_alnum(gcode))
-    cover_have = load_cover_file(gcode);
+    cover_have = load_cover_file(gcode, cover_pix);
 }
 
 bool coverart_available(void) {
-  return cover_have;
+  return cover_have && cover_pix;
 }
 
 void coverart_draw(volatile uint8_t *frame) {
-  if (!cover_have)
+  if (!cover_have || !cover_pix)
     return;
   // Re-assert our palette every frame: the logo (info tab) shares the
   // MEM_PALETTE[20..235] range and may have overwritten the cube.
