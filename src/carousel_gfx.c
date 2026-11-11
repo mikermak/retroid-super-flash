@@ -345,21 +345,28 @@ static void draw_header(volatile uint8_t *fb, const t_cg_scene *s) {
   if (!s->nfilters)
     return;
   clip_y0 = 0; clip_y1 = CG_AREA_Y0;
-  unsigned total = 0;
-  for (unsigned i = 0; i < s->nfilters; i++)
-    total += font_width(s->filter_names[i]) + 8;
-  int x = SW - 2 - (int)total;
+  // Padding per pill: 8 px, or 4 px when five systems must share the bar.
+  int pad = 8, total = 0;
+  for (int tries = 0; tries < 2; tries++) {
+    total = 0;
+    for (unsigned i = 0; i < s->nfilters; i++)
+      total += font_width(s->filter_names[i]) + pad;
+    if (SW - 2 - total >= (int)s->header_minx)
+      break;
+    pad = 4;
+  }
+  int x = SW - 2 - total;
   if (x < (int)s->header_minx)
     x = s->header_minx;
   for (unsigned i = 0; i < s->nfilters; i++) {
-    int w = font_width(s->filter_names[i]) + 8;
+    int w = font_width(s->filter_names[i]) + pad;
     if (x + w > SW)
       break;
     if (i == s->filter) {
       rrect(fb, x, 1, w, 15, 2, CG_BG);
-      text(fb, s->filter_names[i], x + 4, 0, CG_FT);
+      text(fb, s->filter_names[i], x + pad / 2, 0, CG_FT);
     } else
-      text(fb, s->filter_names[i], x + 4, 0, s->theme->light ? CG_BG : CG_FT);
+      text(fb, s->filter_names[i], x + pad / 2, 0, s->theme->light ? CG_BG : CG_FT);
     x += w;
   }
 }

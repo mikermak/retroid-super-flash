@@ -438,7 +438,7 @@ typedef struct {
   // (The .CRT cartridge cache lives in the scratch area above.)
   uint16_t carlist[BROWSER_MAXFN_CNT];
   uint8_t bgtex[CG_AREA_H * 240] __attribute__((aligned(4)));
-  uint8_t blanks[96 * 1024] __attribute__((aligned(4)));   // Unpacked blank carts
+  uint8_t blanks[128 * 1024] __attribute__((aligned(4)));   // Unpacked blank carts
 #endif
 } t_sdram_state;
 

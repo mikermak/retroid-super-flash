@@ -50,7 +50,7 @@ DEF_BLENDER = os.path.join(DOCS, "builders", "gb-builder-3d", ".tools", "blender
 DEF_GBA_MODEL = os.path.join(DEF_DB, "models", "gameboy_advance_cartridge.glb")
 RENDER_VERSION = 1
 
-EXTS = {".gba": "gba", ".agb": "gba", ".gb": "gb", ".gbc": "gbc", ".cgb": "gbc"}
+EXTS = {".gba": "gba", ".agb": "gba", ".gb": "gb", ".gbc": "gbc", ".cgb": "gbc", ".nes": "nes"}
 
 
 # ---------------------------------------------------------------------------
@@ -76,6 +76,10 @@ def read_rom(path):
         g["code"] = code
         if re.fullmatch(r"[0-9A-Za-z]{4}", code):
             g["key"] = "%s/%s" % (code[0].upper(), code.upper())
+    elif system == "nes":
+        # No-Intro / Screenscraper use the CRC without the 16-byte iNES header.
+        if data[:4] == b"NES\x1a" and len(data) > 16:
+            g["crc_nohdr"] = "%08X" % (zlib.crc32(data[16:]) & 0xFFFFFFFF)
     elif len(data) >= 0x150:
         g["title"] = data[0x134:0x143].split(b"\0")[0].decode("latin-1").strip()
         g["cgb"] = data[0x143]
@@ -103,7 +107,7 @@ def read_testset(path):
             if not line or line.startswith("#") or "|" not in line:
                 continue
             system, name = [x.strip() for x in line.split("|", 1)]
-            games.append({"system": system, "file": name + {"gba": ".gba", "gb": ".gb", "gbc": ".gbc"}[system],
+            games.append({"system": system, "file": name + {"gba": ".gba", "gb": ".gb", "gbc": ".gbc", "nes": ".nes"}[system],
                           "nointro": name, "cgb": 0x80 if system == "gbc" else 0})
     return games
 
@@ -142,6 +146,8 @@ def cart_colour(g, name):
             return srgb_to_linear(h), clear
     if g["system"] == "gba":
         return None, False                         # The model's own grey
+    if g["system"] == "nes":
+        return srgb_to_linear("6f6f74"), False     # NES grey
     if g["system"] == "gbc" or g.get("cgb", 0) & 0x80:
         return srgb_to_linear("1e1e22"), False     # Game Boy Color carts are black
     return srgb_to_linear("a2a2a8"), False         # Classic grey Game Boy cart
@@ -158,7 +164,9 @@ def lookup(client, g, region):
     system = g["system"]
     romnom = (g.get("nointro") or os.path.splitext(g["file"])[0]) + ".zip"
     jeu = None
-    if g.get("crc"):
+    if g.get("crc_nohdr"):
+        jeu = client.game_info(system, romnom=romnom, crc=g["crc_nohdr"], size=g["size"] - 16)
+    if not jeu and g.get("crc"):
         jeu = client.game_info(system, romnom=romnom, crc=g["crc"], size=g["size"])
     if not jeu:
         jeu = client.game_info(system, romnom=romnom)
@@ -215,7 +223,7 @@ def main():
         tex = None
         if jeu:
             prefs = ss.REGION_ORDER.get(region, ss.REGION_ORDER["eu"])
-            m = ss.pick_media(jeu, "support-texture", prefs)
+            m = ss.pick_media(jeu, "support-texture", prefs) or ss.pick_media(jeu, "support-2D", prefs)
             if m:
                 ext = m.get("format") or "png"
                 dest = os.path.join(args.db, "media", str(info["ssid"]), "label_%s.%s" % (m.get("region", "x"), ext))
@@ -298,7 +306,8 @@ def render(args, jobs):
 def make_blanks(args):
     """Blank carts (one per system) for the firmware: res/carts.bin."""
     jobs = []
-    for system, col in (("gba", None), ("gb", "a2a2a8"), ("gbc", "1e1e22"), ("folder", "e2b85e")):
+    for system, col in (("gba", None), ("gb", "a2a2a8"), ("gbc", "1e1e22"), ("folder", "e2b85e"),
+                        ("nes", "6f6f74")):
         jobs.append({"system": system, "body": srgb_to_linear(col) if col else None, "clear": False, "label": None,
                      "out": os.path.join(args.db, "renders", "blank_" + system), "_stamp": "blank"})
     render(args, jobs)

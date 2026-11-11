@@ -19,6 +19,8 @@ shot() {  # name theme slide filter items...
 GBA="$C/gba_3767.crt $C/gba_84408.crt $C/gba_84406.crt $C/gba_3751.crt $C/gba_3790.crt"
 GB="$C/gb_2970.crt $C/gb_2967.crt $C/gb_2976.crt $C/gb_69990.crt $C/gb_2973.crt"
 GBC="$C/gbc_82619.crt $C/gbc_82379.crt $C/gbc_82375.crt $C/gbc_82606.crt $C/gbc_37208.crt"
+NES="$C/nes_1250.crt $C/nes_1246.crt $C/nes_1245.crt $C/nes_1255.crt $C/nes_1256.crt"
+MIX="$C/gb_2976.crt $C/gba_84406.crt $C/nes_1245.crt $C/gb_69990.crt $C/gba_3751.crt"
 ALL="$C/gb_69990.crt $C/gbc_82606.crt $C/gba_3762.crt blank:$C/blank_gba.crt:My_Homebrew_Game blank:$C/blank_folder.crt:Hacks"
 BLANK="$C/gba_3776.crt blank:$C/blank_folder.crt:Hacks blank:$C/blank_gba.crt:My_Homebrew_Game blank:$C/blank_gb.crt:Unknown_GB_game $C/gbc_36998.crt"
 i=0
@@ -30,6 +32,9 @@ for T in red-dark red-white hout donker licht; do
     shot "$T-alles" $i 0 0 $ALL
     shot "$T-leeg" $i 0 0 $BLANK
     for S in 192 128 64; do shot "$T-anim-$S" $i $S 1 $GBA; done
+    shot "$T-nes" $i 0 4 $NES
+    shot "$T-alles-nes" $i 0 0 $MIX
+    shot "$T-nes-anim-128" $i 128 4 $NES
   fi
   i=$((i+1))
 done

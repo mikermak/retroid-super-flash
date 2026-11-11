@@ -18,7 +18,7 @@ import urllib.error
 API = "https://api.screenscraper.fr/api2/"
 SOFTNAME = "retroid-library"
 SECRET_KEYS = ("devid", "devpassword", "ssid", "sspassword")
-SYSTEM_IDS = {"gb": 9, "gbc": 10, "gba": 12}
+SYSTEM_IDS = {"gb": 9, "gbc": 10, "gba": 12, "nes": 3}
 
 
 class SSError(Exception):

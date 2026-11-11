@@ -27,9 +27,12 @@ SPECS = {
 }
 SPECS["gbc"] = SPECS["gb"]
 SPECS["folder"] = dict(w=60.0, h=46.0, d=4.0, lw=40.0, lh=15.0, ltop=0, corner=None)
+# NES (72-pin): portrait label in a recess at the top, grip grooves beside it
+# and horizontal ridges at the bottom.
+SPECS["nes"] = dict(w=120.0, h=133.0, d=17.0, lw=56.0, lh=92.0, ltop=4.0, corner=None)
 
 # Pixels per mm on screen for the front pose (fits ~128x84 px).
-SCALE = {"gba": 2.20, "gb": 1.26, "gbc": 1.26, "folder": 1.62}
+SCALE = {"gba": 2.20, "gb": 1.26, "gbc": 1.26, "folder": 1.62, "nes": 0.64}
 
 
 # ---------------------------------------------------------------------------
@@ -53,6 +56,21 @@ def box(name, sx, sy, sz, loc, rot_y=0.0):
     if rot_y:
         bmesh.ops.rotate(bm, verts=bm.verts, matrix=Matrix.Rotation(rot_y, 3, 'Y'))
     bmesh.ops.translate(bm, vec=Vector(loc), verts=bm.verts)
+    bm.to_mesh(me)
+    bm.free()
+    ob = bpy.data.objects.new(name, me)
+    bpy.context.scene.collection.objects.link(ob)
+    return ob
+
+
+def multi_box(name, boxes):
+    """One cutter object made of several boxes (sx, sy, sz, loc): one boolean."""
+    me = bpy.data.meshes.new(name)
+    bm = bmesh.new()
+    for sx, sy, sz, loc in boxes:
+        r = bmesh.ops.create_cube(bm, size=1.0)
+        bmesh.ops.scale(bm, vec=Vector((sx, sy, sz)), verts=r["verts"])
+        bmesh.ops.translate(bm, vec=Vector(loc), verts=r["verts"])
     bm.to_mesh(me)
     bm.free()
     ob = bpy.data.objects.new(name, me)
@@ -227,6 +245,20 @@ def build_cart(system, body_mat, lab_mat):
         arrow = bpy.data.objects.new("arrow", me)
         bpy.context.scene.collection.objects.link(arrow)
         boolean_cut(body, arrow)
+    elif system == "nes":
+        lw, lh = s["lw"] * MM, s["lh"] * MM
+        top = H - s["ltop"] * MM
+        cuts = []
+        # Vertical grip grooves left and right of the label.
+        for side in (-1, 1):
+            for i in range(7):
+                x = side * (lw / 2 + 7.0 * MM + i * 4.2 * MM)
+                cuts.append((1.4 * MM, 1.6 * MM, lh - 10 * MM, (x, front, top - lh / 2 - 2 * MM)))
+        # Horizontal ridges across the bottom.
+        for i in range(8):
+            z = 7.0 * MM + i * 3.6 * MM
+            cuts.append((W - 16 * MM, 1.6 * MM, 1.3 * MM, (0, front, z)))
+        boolean_cut(body, multi_box("grips", cuts))
     else:
         # GBA: side notches near the bottom + a groove line under the label.
         for sx in (-1, 1):
@@ -511,6 +543,7 @@ def main():
     carts["gb"] = build_cart("gb", body_mat, lab_mat)
     carts["gbc"] = carts["gb"]
     carts["folder"] = build_folder(body_mat, lab_mat)
+    carts["nes"] = build_cart("nes", body_mat, lab_mat)
 
     sc = bpy.context.scene
     tmp = os.path.join(os.path.dirname(os.path.abspath(argv[0])), "_render_tmp_%d.png" % os.getpid())

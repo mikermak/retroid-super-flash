@@ -22,7 +22,9 @@ Het GBA-model staat **niet** in git (9,4 MB, eigen licentie). De tool zoekt het 
 `firmware\library-db\models\gameboy_advance_cartridge.glb` (ander pad: `--gba-model`).
 Ontbreekt het, dan gebruikt de tool het eigen v2-model.
 
-Voorbeelden: map `preview\v3\` (elk plaatje ook 3x vergroot). Het mooiste:
+NES-voorbeelden: map `preview\v4\` (`donker-nes-3x.png`, `hout-alles-nes-3x.png`,
+`licht-nes-anim-128-3x.png`).
+Voorbeelden GBA/GB/GBC: map `preview\v3\` (elk plaatje ook 3x vergroot). Het mooiste:
 `donker-gba-3x.png`, `hout-alles-3x.png`, `hout-gbc-3x.png`, `licht-gba-3x.png`,
 `donker-anim-128-3x.png` (midden in het schuiven) en `vergelijk-gba-3x.png` (v2 naast v3).
 Die previews bevatten echte labels en staan daarom niet in git.
@@ -38,7 +40,7 @@ Stop de SD-kaart in de pc (bijvoorbeeld als `F:`), open een terminal in de map
 python tools/library/maak_bibliotheek.py --roms F:\ --uit C:\Users\aruur\Documents\Retroid\firmware\library-db\LIBRARY
 ```
 
-Wat er gebeurt: alle .gba/.gb/.gbc-bestanden worden gelezen, opgezocht bij Screenscraper
+Wat er gebeurt: alle .gba/.gb/.gbc/.nes-bestanden worden gelezen, opgezocht bij Screenscraper
 (met de inlog uit de Label Builder), het label wordt gedownload en de cart wordt in Blender
 gerenderd. Alles wordt bewaard in `firmware\library-db\`, dus de tweede keer gaat het
 heel snel (alleen nieuwe spellen worden gedaan).
@@ -73,7 +75,7 @@ precies zo heten als in `testset.txt` (No-Intro-namen).
 | Knop | Wat het doet |
 |---|---|
 | Links / Rechts | vorige / volgende cart (vasthouden = snel scrollen) |
-| L / R | systeem: All, GBA, GB, GBC (lege worden overgeslagen); voorbij het eind naar het vorige/volgende tabblad |
+| L / R | systeem: All, GBA, GB, GBC, NES (lege worden overgeslagen); voorbij het eind naar het vorige/volgende tabblad |
 | A | spel starten (korte fade naar zwart); op een map: openen |
 | B | map terug; in de hoofdmap: opstartopties |
 | Omhoog | opstartopties (saves, patches, cheats, klok) |
@@ -88,11 +90,23 @@ precies zo heten als in `testset.txt` (No-Intro-namen).
 - **Browser view**: `Carousel` (standaard) of `List` (de oude lijst).
 - **Save to SD card** om te bewaren.
 
+## NES-spellen
+
+NES-spellen (.nes) hebben een eigen tabblad **NES** in de carrousel en worden getoond als
+grijze NES-cartridge (eigen 3D-model op echte maten, 120 x 133 x 17 mm) met het echte label.
+Ze starten met A precies zoals in de lijst, via de emulator **PocketNES**:
+- de chis-firmware heeft PocketNES al **ingebouwd**, dus het werkt zonder extra bestand;
+- staat er een eigen `/.superfw/emulators/pocketnes.gba` op de SD, dan gebruikt hij die
+  eerst (handig voor een nieuwere versie). Die moet je zelf downloaden.
+
+Het bibliotheek-commando neemt .nes-bestanden vanzelf mee (de NES-cart wordt op
+bestandsnaam gekoppeld: `LIBRARY/N/<romnaam>.CRT`).
+
 ## Wat je ziet als een spel niet in de bibliotheek staat
 
 Een nette lege 3D-cart in de kleur van het systeem, met de naam op het label.
-Mappen zijn gele 3D-mappen, firmware-bestanden en andere systemen (NES, SMS ...) lege
-grijze GBA-carts. Gebruikersnaam: `USERNAME.TXT` in de hoofdmap (max. 10 tekens).
+Mappen zijn gele 3D-mappen; NES-spellen een lege grijze NES-cart; firmware-bestanden en
+andere systemen (SMS, PC Engine ...) lege grijze GBA-carts. Gebruikersnaam: `USERNAME.TXT` in de hoofdmap (max. 10 tekens).
 Klok: niet getoond (de SuperChis heeft geen klokchip die het menu kan lezen).
 
 ## Waarom het er zo goed uit kan zien (techniek in het kort)
@@ -113,6 +127,9 @@ gekozen: dat kan maar één beeldbuffer, waardoor animaties zouden scheuren.
   krijgen het label van het origineel.
 - Accenten (Pokémon) worden als gewone letters getoond (Pokemon), voor de zekerheid.
 - Lite/SD: geen carrousel (geen ruimte in flash).
+- Flash-ruimte chis: na de lege NES-cart nog ~3,7 KB vrij voor het vaste adres 0x190000.
+  Een volgende lege cart past niet meer zonder iets anders te verkleinen.
+- Japanse NES-spellen staan in een NES-cart, niet in een Famicom-cart (vervolgidee).
 - Ideeën: box-art als extra stand, meer kleuren-edities, Recent-tab als carrousel.
 
 ## Voor ontwikkelaars

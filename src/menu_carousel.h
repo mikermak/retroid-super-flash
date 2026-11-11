@@ -9,12 +9,12 @@
  * label (tools/library/maak_bibliotheek.py writes /LIBRARY/ on the SD card):
  *   GBA:     /LIBRARY/<c>/<GAMECODE>.CRT        (game code from the header)
  *   GB/GBC:  /LIBRARY/G<h>/<HASH>.CRT           (FNV-1a of header 0x134..0x14F)
- *   else:    /LIBRARY/N/<rom file name>.CRT
+ *   else:    /LIBRARY/N/<rom file name>.CRT   (also all NES games)
  * Games without one get a blank 3D cart (built into the firmware) with the
  * name printed on the label.
  *
  *  - Left/Right: previous/next cart (hold = fast scroll)
- *  - L/R: system filter All / GBA / GB / GBC (empty ones are skipped); past
+ *  - L/R: system filter All / GBA / GB / GBC / NES (empty ones skipped); past
  *    the ends L/R go to the previous/next tab like before.
  *  - A: start the game (or open a folder)
  *  - B: one folder up; in the root folder: start options of the game
@@ -38,11 +38,11 @@
 #define CAR_SLOTS        (scratch_mem_size / CAR_SLOT_SIZE)
 #define CAR_LIB_DIR      "/LIBRARY"
 
-enum { CarAll = 0, CarGBA, CarGB, CarGBC, CarFiltCNT };
-static const char *const car_filter_names[CarFiltCNT] = { "All", "GBA", "GB", "GBC" };
+enum { CarAll = 0, CarGBA, CarGB, CarGBC, CarNES, CarFiltCNT };
+static const char *const car_filter_names[CarFiltCNT] = { "All", "GBA", "GB", "GBC", "NES" };
 
 // Kinds of list entries.
-enum { CarGba = 0, CarGb, CarGbc, CarFolder, CarOther };
+enum { CarGba = 0, CarGb, CarGbc, CarFolder, CarOther, CarNes };
 
 // Functions defined further down in menu.c.
 static void browser_open(const char *fn, uint32_t fs);
@@ -70,7 +70,7 @@ static struct {
   unsigned settle;          // frames since the last move
   int fade;                 // fade-in level (16 = black, 0 = done)
   unsigned lastkeys;        // key state seen on the previous frame
-  const t_crt *blank[4];    // Blank carts (GBA, GB, GBC, folder), from flash
+  const t_crt *blank[5];    // Blank carts (GBA, GB, GBC, folder, NES), from flash
   struct {
     uint16_t idx;           // fileorder index
     uint16_t pos;           // carlist position when loaded (eviction hint)
@@ -96,6 +96,8 @@ static int car_type(const t_centry *e) {
     return CarGb;
   if (!strcasecmp(ext, ".gbc"))
     return CarGbc;
+  if (!strcasecmp(ext, ".nes"))
+    return CarNes;          // Started with PocketNES, like in the list
   if (get_emu_info(&ext[1]) || !strcasecmp(ext, ".fw"))
     return CarOther;        // Other emulated systems + firmware updates ("All")
   return -1;                // .sav, .txt ... only in the list view
@@ -108,7 +110,8 @@ static bool car_match(int type, unsigned filter) {
     return true;
   return (filter == CarGBA && type == CarGba) ||
          (filter == CarGB  && type == CarGb)  ||
-         (filter == CarGBC && type == CarGbc);
+         (filter == CarGBC && type == CarGbc) ||
+         (filter == CarNES && type == CarNes);
 }
 
 static const t_crt *car_blank_for(int type) {
@@ -116,6 +119,7 @@ static const t_crt *car_blank_for(int type) {
   case CarGb:     return car.blank[1];
   case CarGbc:    return car.blank[2];
   case CarFolder: return car.blank[3] ? car.blank[3] : car.blank[0];
+  case CarNes:    return car.blank[4] ? car.blank[4] : car.blank[0];
   default:        return car.blank[0];
   }
 }
@@ -278,7 +282,7 @@ static void car_init(void) {
   set_supercard_mode(MAPPED_SDRAM, true, true);
   if (unpacked > 16 && unpacked <= sizeof(sdr_state->blanks) && !memcmp(b, "RCRB", 4)) {
     uint32_t n = *(const uint32_t*)&b[4];
-    for (unsigned i = 0; i < n && i < 4; i++) {
+    for (unsigned i = 0; i < n && i < 5; i++) {
       const t_crt *c = (const t_crt*)&b[*(const uint32_t*)&b[8 + 4 * i]];
       if (!memcmp(c->magic, "RCRT", 4))
         car.blank[i] = c;

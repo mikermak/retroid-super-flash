@@ -21,7 +21,7 @@ import struct
 from PIL import Image, ImageEnhance, ImageFilter
 
 VERSION = 1
-SYSTEMS = {"gba": 0, "gb": 1, "gbc": 2, "folder": 3}
+SYSTEMS = {"gba": 0, "gb": 1, "gbc": 2, "folder": 3, "nes": 4}
 HEADER_SIZE = 0x90
 
 # Pose order + palette slot (first index, colour count) in MEM_PALETTE.

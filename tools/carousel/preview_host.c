@@ -111,13 +111,13 @@ int main(int argc, char **argv) {
     items[k].title = titles[k];
   }
 
-  static const char *const fnames[] = { "All", "GBA", "GB", "GBC" };
+  static const char *const fnames[] = { "All", "GBA", "GB", "GBC", "NES" };
   t_cg_scene s;
   memset(&s, 0, sizeof(s));
   s.theme = t;
   s.bgtex = bg;
   s.pal = pal;
-  s.nfilters = 4;
+  s.nfilters = 5;
   s.filter = filter;
   s.filter_names = fnames;
   s.header_minx = 7 * 16 + 2;
