@@ -30,8 +30,6 @@ else ifeq ($(BOARD),chis)
   GLOBAL_DEFINES += -DSUPPORT_NORGAMES -DSUPERCHIS_IO -DFONTS_EXT
   BUNDLE_GBC_EMULATOR = 1
   BUNDLE_OTHER_EMULATORS = 1
-  # Blank 3D cartridges for the carousel (made by tools/library).
-  ASSETFILES += res/carts.bin.comp
   # Can't be over 2MiB (hardlimit)
   MAXFSIZE = 2048
   FWFLAVOUR = "Chis"
@@ -132,6 +130,7 @@ INFILES=src/gba_ewram_crt0.S \
         src/menu.c \
         src/coverart.c \
         src/carousel_gfx.c \
+        src/lib_index.c \
         src/cheats.c \
         src/flash.c \
         src/sha256.c \

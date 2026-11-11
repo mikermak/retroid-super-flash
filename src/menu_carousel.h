@@ -6,12 +6,14 @@
  * "Carousel"; all other tabs stay as they are. Drawing: carousel_gfx.c.
  *
  * Every game is shown as a cartridge rendered in 3D on a PC with its real
- * label (tools/library/maak_bibliotheek.py writes /LIBRARY/ on the SD card):
- *   GBA:     /LIBRARY/<c>/<GAMECODE>.CRT        (game code from the header)
- *   GB/GBC:  /LIBRARY/G<h>/<HASH>.CRT           (FNV-1a of header 0x134..0x14F)
- *   else:    /LIBRARY/N/<rom file name>.CRT   (also all NES games)
- * Games without one get a blank 3D cart (built into the firmware) with the
- * name printed on the label.
+ * label. The carts live in /LIBRARY/ on the SD card and are found through
+ * the indexes /LIBRARY/MY.BIN (own library, maak_bibliotheek.py, wins) and
+ * /LIBRARY/INDEX.BIN (base pack, maak_basispakket.py), see lib_index.h:
+ *   1. GBA game code, 2. ROM file name, 3. CRC32 (GB/GBC/NES; computed once,
+ *      a few KB per frame while the cart stands still, kept in /LIBRARY/CRC.BIN).
+ * Older libraries (key/name paths, v2-v6) still work as a fallback.
+ * Games without a cart get a blank 3D cart (/LIBRARY/_BLANK/BLANK.BIN) with
+ * the name on the label; without that file, a flat placeholder card.
  *
  *  - Left/Right: previous/next cart (hold = fast scroll)
  *  - L/R: system filter All / GBA / GB / GBC / NES (empty ones skipped); past
@@ -55,7 +57,18 @@ const t_emu_loader * get_emu_info(const char *ext);
 const void *get_vfile_ptr(const char *fname);
 int movedir_up();
 
+#include "lib_index.h"
+
 static uint16_t car_pal[256];     // Palette stage, copied at V-blank (menu_flip)
+
+// CRC32 of one ROM, computed a few KB per frame (see car_crc_step).
+static struct {
+  bool active;
+  FIL f;
+  uint32_t crc, done, size, ph;
+  uint16_t idx;
+  unsigned gen;
+} carjob;
 static bool car_pal_dirty;
 
 static struct {
@@ -269,6 +282,28 @@ static void car_load_user(void) {
   f_close(&fd);
 }
 
+// Reads a whole file into SDRAM (16-bit writes only); returns its size or 0.
+static unsigned car_read_file(const char *path, uint8_t *dst, unsigned maxsize) {
+  FIL fd;
+  if (FR_OK != f_open(&fd, path, FA_READ))
+    return 0;
+  uint32_t size = f_size(&fd), done = 0;
+  bool ok = size && size <= maxsize;
+  while (ok && done < size) {
+    uint32_t buf[256];
+    UINT rd = 0;
+    unsigned chunk = MIN(sizeof(buf), size - done);
+    if (FR_OK != f_read(&fd, buf, chunk, &rd) || rd != chunk)
+      ok = false;
+    else {
+      dma_memcpy16(&dst[done], buf, (chunk + 1) / 2);
+      done += chunk;
+    }
+  }
+  f_close(&fd);
+  return ok ? size : 0;
+}
+
 static void car_init(void) {
   car_load_user();
   car.built = false;
@@ -277,15 +312,12 @@ static void car_init(void) {
   car.fade = 16;            // Fade in the first time the carousel shows up
   car_cache_drop();
 
-  // Blank carts live in the firmware ("CART" asset, aplib compressed). The
-  // asset area is only visible with the SD interface unmapped, so unpack
-  // them into our own SDRAM buffer once.
+  libidx_crc_init();
+
+  // Blank carts: /LIBRARY/_BLANK/BLANK.BIN (written by the library tools).
   const uint8_t *b = sdr_state->blanks;
-  set_supercard_mode(MAPPED_SDRAM, true, false);
-  const uint8_t *packed = get_vfile_ptr("CART");
-  unsigned unpacked = packed ? apunpack16(packed, sdr_state->blanks) : 0;
-  set_supercard_mode(MAPPED_SDRAM, true, true);
-  if (unpacked > 16 && unpacked <= sizeof(sdr_state->blanks) && !memcmp(b, "RCRB", 4)) {
+  unsigned got = car_read_file(CAR_LIB_DIR "/_BLANK/BLANK.BIN", sdr_state->blanks, sizeof(sdr_state->blanks));
+  if (got > 16 && !memcmp(b, "RCRB", 4)) {
     uint32_t n = *(const uint32_t*)&b[4];
     for (unsigned i = 0; i < n && i < 5; i++) {
       const t_crt *c = (const t_crt*)&b[*(const uint32_t*)&b[8 + 4 * i]];
@@ -353,25 +385,8 @@ static bool car_key_path(const char *rompath, uint32_t fs, int type, char *out, 
 
 // Reads a .CRT into an SDRAM slot (16-bit writes only) and checks it.
 static bool car_read_crt(const char *path, uint8_t *dst) {
-  FIL fd;
-  if (FR_OK != f_open(&fd, path, FA_READ))
-    return false;
-  uint32_t size = f_size(&fd);
-  bool ok = size >= sizeof(t_crt) && size <= CAR_SLOT_SIZE;
-  uint32_t done = 0;
-  while (ok && done < size) {
-    uint32_t buf[256];
-    UINT rd = 0;
-    unsigned chunk = MIN(sizeof(buf), size - done);
-    if (FR_OK != f_read(&fd, buf, chunk, &rd) || rd != chunk)
-      ok = false;
-    else {
-      dma_memcpy16(&dst[done], buf, (chunk + 1) / 2);
-      done += chunk;
-    }
-  }
-  f_close(&fd);
-  if (!ok)
+  uint32_t size = car_read_file(path, dst, CAR_SLOT_SIZE);
+  if (size < sizeof(t_crt))
     return false;
   const t_crt *c = (const t_crt*)dst;
   if (memcmp(c->magic, "RCRT", 4) || c->version != 1 || c->npose < CG_POSE_CNT || c->npose > CG_POSE_Z + 1)
@@ -390,6 +405,108 @@ static bool car_read_crt(const char *path, uint8_t *dst) {
       return false;
   }
   return true;
+}
+
+static const char *car_family(int type) {
+  return type == CarGba ? "gba" : (type == CarGb || type == CarGbc) ? "gb" : type == CarNes ? "nes" : NULL;
+}
+
+static bool car_idx_rd(void *ctx, uint32_t off, void *buf, unsigned len) {
+  UINT rd = 0;
+  return FR_OK == f_lseek((FIL*)ctx, off) && FR_OK == f_read((FIL*)ctx, buf, len, &rd) && rd == len;
+}
+
+// Own library (MY.BIN, cart dir M) first, then the base pack (INDEX.BIN, C).
+static bool car_lookup(char keys[][128], unsigned nk, char *path, unsigned sz) {
+  static const char *const files[2] = { CAR_LIB_DIR "/MY.BIN", CAR_LIB_DIR "/INDEX.BIN" };
+  for (unsigned i = 0; i < 2; i++) {
+    FIL f;
+    if (FR_OK != f_open(&f, files[i], FA_READ))
+      continue;
+    uint32_t cart;
+    bool found = false;
+    for (unsigned k = 0; k < nk && !found; k++)
+      found = libidx_find(car_idx_rd, &f, keys[k], &cart);
+    f_close(&f);
+    if (found) {
+      npf_snprintf(path, sz, CAR_LIB_DIR "/%c/%02lX/%04lX.CRT", i ? 'C' : 'M',
+                   (unsigned long)(cart >> 8), (unsigned long)cart);
+      return true;
+    }
+  }
+  return false;
+}
+
+// /LIBRARY/CRC.BIN: records { u32 path hash, u32 size, u32 crc }.
+static bool car_crc_cached(uint32_t ph, uint32_t size, uint32_t *crc) {
+  FIL f;
+  if (FR_OK != f_open(&f, CAR_LIB_DIR "/CRC.BIN", FA_READ))
+    return false;
+  uint32_t rec[3 * 32];
+  UINT rd = 0;
+  bool found = false;
+  while (!found && FR_OK == f_read(&f, rec, sizeof(rec), &rd) && rd >= 12) {
+    for (unsigned i = 0; i + 3 <= rd / 4; i += 3)
+      if (rec[i] == ph && rec[i + 1] == size) {
+        *crc = rec[i + 2];
+        found = true;
+        break;
+      }
+    if (rd < sizeof(rec))
+      break;
+  }
+  f_close(&f);
+  return found;
+}
+
+static void car_crc_start(const char *rompath, uint32_t size, uint32_t ph, unsigned idx, bool nes) {
+  if (size > 8 * 1024 * 1024 || FR_OK != f_open(&carjob.f, rompath, FA_READ))
+    return;
+  carjob.done = 0;
+  if (nes) {
+    // No-Intro CRCs are without the 16-byte iNES header.
+    uint8_t h[16];
+    UINT rd = 0;
+    if (FR_OK == f_read(&carjob.f, h, 16, &rd) && rd == 16 && !memcmp(h, "NES\x1a", 4))
+      carjob.done = 16;
+    f_lseek(&carjob.f, carjob.done);
+  }
+  carjob.crc = 0xFFFFFFFFu;
+  carjob.size = size;
+  carjob.ph = ph;
+  carjob.idx = idx;
+  carjob.gen = browser_gen;
+  carjob.active = true;
+}
+
+// A few KB of CRC per frame; when done, store it and let the cart reload.
+static void car_crc_step(void) {
+  if (!carjob.active)
+    return;
+  for (unsigned n = 0; n < 8 && carjob.done < carjob.size; n++) {
+    uint32_t buf[512];
+    UINT rd = 0;
+    if (FR_OK != f_read(&carjob.f, buf, sizeof(buf), &rd) || !rd) {
+      carjob.size = carjob.done;    // read error: give up quietly
+      break;
+    }
+    carjob.crc = libidx_crc(carjob.crc, (const uint8_t*)buf, rd);
+    carjob.done += rd;
+  }
+  if (carjob.done < carjob.size)
+    return;
+  f_close(&carjob.f);
+  carjob.active = false;
+  uint32_t rec[3] = { carjob.ph, carjob.size, carjob.crc ^ 0xFFFFFFFFu };
+  FIL f;
+  if (FR_OK == f_open(&f, CAR_LIB_DIR "/CRC.BIN", FA_WRITE | FA_OPEN_APPEND)) {
+    UINT wr;
+    f_write(&f, rec, sizeof(rec), &wr);
+    f_close(&f);
+  }
+  for (unsigned i = 0; i < CAR_SLOTS; i++)
+    if (car.lc[i].state && car.lc[i].idx == carjob.idx && car.lc[i].gen == carjob.gen)
+      car.lc[i].state = 0;          // look it up again (now with the CRC)
 }
 
 static void car_cache_load(int lpos) {
@@ -416,8 +533,45 @@ static void car_cache_load(int lpos) {
   if (car.libdir) {
     char rompath[MAX_FN_LEN * 2], path[MAX_FN_LEN + 32];
     npf_snprintf(rompath, sizeof(rompath), "%s%s", smenu.browser.cpath, e->fname);
-    if (car_key_path(rompath, e->filesize, type, path, sizeof(path)))
+
+    // 1) Indexes: game code, file name, CRC (if known).
+    const char *fam = car_family(type);
+    bool need_crc = false;
+    uint32_t ph = libidx_fnv(rompath, LIBIDX_SEED1);
+    if (fam) {
+      char keys[3][128], val[MAX_FN_LEN];
+      unsigned nk = 0;
+      if (type == CarGba) {
+        t_rom_header romh;
+        if (!preload_gba_rom(rompath, e->filesize, &romh)) {
+          memcpy(val, romh.gcode, 4);
+          val[4] = 0;
+          libidx_key(keys[nk++], sizeof(keys[0]), 'S', fam, val);
+        }
+      }
+      strcpy(val, e->fname);
+      char *dot = strrchr(val, '.');
+      if (dot && dot != val)
+        *dot = 0;
+      libidx_key(keys[nk++], sizeof(keys[0]), 'N', fam, val);
+      uint32_t crc;
+      if (type != CarGba) {
+        if (car_crc_cached(ph, e->filesize, &crc)) {
+          npf_snprintf(val, sizeof(val), "%08lX", (unsigned long)crc);
+          libidx_key(keys[nk++], sizeof(keys[0]), 'C', fam, val);
+        } else
+          need_crc = true;
+      }
+      ok = car_lookup(keys, nk, path, sizeof(path)) && car_read_crt(path, car_slot_ptr(v));
+    }
+
+    // 2) Older libraries: game-code / header-hash path.
+    if (!ok && car_key_path(rompath, e->filesize, type, path, sizeof(path)))
       ok = car_read_crt(path, car_slot_ptr(v));
+
+    // 3) Not found yet: compute the CRC (once) and try again afterwards.
+    if (!ok && need_crc && !carjob.active)
+      car_crc_start(rompath, e->filesize, ph, idx, type == CarNes);
     if (!ok) {
       // Fallback: by file name (No-Intro style names, made with --testset).
       npf_snprintf(path, sizeof(path), CAR_LIB_DIR "/N/%s", e->fname);
@@ -520,8 +674,11 @@ static void render_carousel(volatile uint8_t *frame, unsigned fcnt) {
   }
 
   // Load cartridges once the cursor stopped moving.
-  if (car.settle >= CAR_SETTLE && car.count && !car.hold)
+  if (car.settle >= CAR_SETTLE && car.count && !car.hold) {
     car_cache_step();
+    if (car.settle >= CAR_ZOOM_WAIT)
+      car_crc_step();
+  }
 
   // Build the scene.
   t_cg_scene s;
@@ -581,9 +738,9 @@ static void render_carousel(volatile uint8_t *frame, unsigned fcnt) {
           s.carts[i].pose = CG_POSE_Z;
           s.carts[i].yoff = (256 - car.zoom) * 28 / 256;
         }
-    if (items[2].crt) {
+    if (items[2].title) {
       s.name = items[2].title;
-      if (!items[2].blank) {
+      if (!items[2].blank && items[2].crt) {
         const t_crt *c = items[2].crt;
         s.meta[0] = c->year;
         s.meta[1] = c->publisher;

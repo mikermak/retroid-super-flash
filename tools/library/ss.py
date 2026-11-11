@@ -66,6 +66,8 @@ class Screenscraper:
         self.log = log
         self._last = 0.0
         self.requests = 0
+        self.today, self.maxday = 0, 0      # quota as last reported by the API
+        self.verbose = True
         os.makedirs(cache_dir, exist_ok=True)
 
     # -- low level ---------------------------------------------------------
@@ -130,7 +132,12 @@ class Screenscraper:
                 resp = data.get("response", {})
                 jeu = strip_secrets(resp.get("jeu"))
                 user = resp.get("ssuser") or {}
-                if user:
+                try:
+                    self.today = int(user.get("requeststoday", self.today))
+                    self.maxday = int(user.get("maxrequestsperday", self.maxday))
+                except (TypeError, ValueError):
+                    pass
+                if user and self.verbose:
                     self.log("    (quota: %s/%s verzoeken vandaag)" % (user.get("requeststoday", "?"), user.get("maxrequestsperday", "?")))
             # Plain-text answers ("Erreur : Rom/Iso/Dossier non trouvée !") = unknown game.
         except SSError as e:

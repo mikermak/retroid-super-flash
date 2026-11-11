@@ -755,11 +755,11 @@ assets_start:
   #endif
 
   #ifdef SUPPORT_NORGAMES
-  .ascii "CART"                                        @ Blank 3D carts (carousel, aplib)
-  .word (carts_end - carts_start)
-  carts_start:
-    .incbin "res/carts.bin.comp"
-  carts_end:
+  .ascii "LOGO"                                        @ HQ logo (palette + pixels)
+  .word (logo_end - logo_start)
+  logo_start:
+    .incbin "res/logo_hq.bin"
+  logo_end:
   .balign 4
   #endif
 

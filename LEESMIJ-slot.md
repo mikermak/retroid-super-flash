@@ -42,6 +42,45 @@ Die previews bevatten echte labels en staan daarom niet in git.
 
 Alleen voor de **SuperChis (chis)**. Op SD/Lite-carts blijft de gewone lijst.
 
+## 0. Basispakket voor klanten (plug-and-play)
+
+Kant-en-klare 3D-carts voor de officiële EU- en US-spellen van GBA, GB, GBC en NES
+(één cart per spel; EU-, US- en World-versie delen er één, label bij voorkeur EU).
+Spellijsten: No-Intro-DAT's (libretro-database) in `firmware\library-db\dats\`.
+Na filteren (alleen officiële releases, geen beta/proto/demo/hack/homebrew/rips) en
+groeperen: **GBA 1.399, GB 850, GBC 990, NES 1.490 = 4.729 spellen**.
+De infokaart bevat in het basispakket alleen feiten (geen beschrijvingen).
+
+**Volledige run (hervatbaar, zelf starten, op de achtergrond):**
+
+```
+python tools/library/maak_basispakket.py
+```
+
+Draai precies dit commando gewoon opnieuw tot hij "Klaar" zegt zonder "(deels ...)": hij
+gaat steeds verder waar hij was, en stopt zelf als het Screenscraper-dagquotum bijna op is
+(standaard houdt hij 300 verzoeken over; `--reserve`). Na elke run ziet je hoeveel
+verzoeken er gebruikt zijn en hoeveel er over zijn.
+Schatting: ~4.700 spellen, ~9.500 Screenscraper-verzoeken (quotum 10.000 per dag, dus
+ongeveer 1-2 dagen), ~12-13 uur renderen, ~165 MB op de SD.
+Uitvoer: `firmware\library-db\basispakket\` (map `LIBRARY` + `LEESMIJ.txt` +
+`CREDITS.txt` voor de klant). Klant: map `LIBRARY` naar de SD-root kopiëren, klaar.
+
+Testen op een steekproef (~40 spellen): `python tools/library/maak_basispakket.py --steekproef`
+(uitvoer in `library-db\basispakket-test\`). Alleen tellen: `--alleen-tellen`.
+
+**Hoe de cart een spel herkent (bestandsnaam maakt niet uit):**
+1. GBA: de spelcode in de ROM (EU- en US-code wijzen naar dezelfde cart);
+2. de bestandsnaam, als die gelijk is aan de No-Intro-naam;
+3. GB/GBC/NES: de CRC van de ROM (NES zonder de 16-byte header). Die wordt één keer
+   uitgerekend als de cart even stilstaat (een paar seconden, de cart toont zolang een
+   lege cartridge) en bewaard in `LIBRARY\CRC.BIN`.
+
+**Eigen bibliotheek + basispakket samen:** `maak_bibliotheek.py` schrijft naar dezelfde
+map `LIBRARY` maar in een eigen index `MY.BIN` (carts in `LIBRARY\M\`); het basispakket
+gebruikt `INDEX.BIN` (carts in `LIBRARY\C\`). Staan ze allebei op de SD, dan wint de eigen
+bibliotheek. Oudere bibliotheken (v2-v6) blijven werken.
+
 ## 1. De bibliotheek maken (op de pc, één commando)
 
 Stop de SD-kaart in de pc (bijvoorbeeld als `F:`), open een terminal in de map
@@ -136,7 +175,8 @@ bestandsnaam gekoppeld: `LIBRARY/N/<romnaam>.CRT`).
 
 ## Wat je ziet als een spel niet in de bibliotheek staat
 
-Een nette lege 3D-cart in de kleur van het systeem, met de naam op het label.
+Een nette lege 3D-cart in de kleur van het systeem, met de naam op het label (uit
+`LIBRARY\_BLANK\BLANK.BIN`; zonder dat bestand een eenvoudige platte kaart).
 Mappen zijn gele 3D-mappen; NES-spellen een lege grijze NES-cart; firmware-bestanden en
 andere systemen (SMS, PC Engine ...) lege grijze GBA-carts. Gebruikersnaam: `USERNAME.TXT` in de hoofdmap (max. 10 tekens).
 Klok: niet getoond (de SuperChis heeft geen klokchip die het menu kan lezen).
@@ -159,9 +199,10 @@ gekozen: dat kan maar één beeldbuffer, waardoor animaties zouden scheuren.
   krijgen het label van het origineel.
 - Accenten (Pokémon) worden als gewone letters getoond (Pokemon), voor de zekerheid.
 - Lite/SD: geen carrousel (geen ruimte in flash).
-- Geheugen chis is nu bijna vol: werkgeheugen (EWRAM) 99,6% (~0,9 KB vrij) en flash nog
-  ~2,2 KB vrij voor het vaste adres 0x190000. Een volgende functie past niet zonder ruimte
-  te maken (bv. de ingebakken lege carts naar een bestand op de SD).
+- Geheugen chis (v7): de lege carts staan niet meer in de firmware maar op de SD
+  (`LIBRARY\_BLANK\BLANK.BIN`, zit in elke bibliotheek en in het basispakket) en het
+  HQ-logo staat in flash in plaats van in het werkgeheugen. Werkgeheugen nu ~97,6%,
+  flash ~34 KB vrij. Zonder `_BLANK` toont de carrousel een eenvoudige platte kaart.
 - Japanse NES-spellen staan in een NES-cart, niet in een Famicom-cart (vervolgidee).
 - Ideeën: box-art als extra stand, meer kleuren-edities, Recent-tab als carrousel.
 

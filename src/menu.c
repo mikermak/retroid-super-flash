@@ -44,6 +44,9 @@
 // its 512KB budget (it bundles the GBC emulator), so it keeps the compact logo.
 #if defined(SUPERCARD_LITE_IO) || defined(SUPPORT_NORGAMES)
   #define USE_HQ_LOGO
+  #ifdef SUPPORT_NORGAMES
+    #define LOGO_HQ_FROM_ASSET   // chis: logo in flash, copied to SDRAM (saves EWRAM)
+  #endif
   #include "res/logo_hq.h"
   #include "res/qr_retroid.h"
 #else
@@ -438,7 +441,8 @@ typedef struct {
   // (The .CRT cartridge cache lives in the scratch area above.)
   uint16_t carlist[BROWSER_MAXFN_CNT];
   uint8_t bgtex[CG_AREA_H * 240] __attribute__((aligned(4)));
-  uint8_t blanks[128 * 1024] __attribute__((aligned(4)));   // Unpacked blank carts
+  uint8_t blanks[128 * 1024] __attribute__((aligned(4)));   // Blank carts (from the SD)
+  uint8_t logo[2 * 216 + 144 * 50] __attribute__((aligned(4)));  // HQ logo (from flash)
 #endif
 } t_sdram_state;
 
@@ -2391,6 +2395,18 @@ void menu_init(int sram_testres) {
     menu_theme = 0;
   reload_theme(menu_theme);
 
+#ifdef LOGO_HQ_FROM_ASSET
+  // The HQ logo sits in the flash asset area (only visible with the SD
+  // interface unmapped): copy it to SDRAM once.
+  set_supercard_mode(MAPPED_SDRAM, true, false);
+  const volatile uint16_t *lg = get_vfile_ptr("LOGO");
+  if (lg) {
+    for (unsigned i = 0; i < sizeof(sdr_state->logo) / 2; i++)
+      ((volatile uint16_t*)sdr_state->logo)[i] = lg[i];
+    logo_hq_data = sdr_state->logo;
+  }
+  set_supercard_mode(MAPPED_SDRAM, true, true);
+#endif
 #ifdef USE_CAROUSEL
   car_init();
 #endif

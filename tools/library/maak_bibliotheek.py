@@ -14,9 +14,9 @@ Wat het doet, per spel:
  3. Het label (support-texture) downloaden.
  4. In Blender de cartridge renderen met dat label (5 standen).
  5. Omzetten naar het GBA-formaat (.CRT) en in --uit zetten:
-      GBA:     LIBRARY/<eerste letter spelcode>/<SPELCODE>.CRT
-      GB/GBC:  LIBRARY/G<x>/<HEADERHASH>.CRT
-      zonder ROM (--testset): LIBRARY/N/<naam>.CRT  (zelfde naam als het romsbestand)
+      <uit>/M/xx/xxxx.CRT + index <uit>/MY.BIN (spelcode / bestandsnaam / CRC)
+      en <uit>/_BLANK/BLANK.BIN (lege carts). MY.BIN wint van het basispakket
+      (INDEX.BIN) als beide in LIBRARY staan; zie src/lib_index.h.
 
 De database, labels en renders blijven in --db (alleen lokaal: labels zijn
 auteursrechtelijk beschermd en horen niet in git of een release).
@@ -39,6 +39,7 @@ import zlib
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import ss  # noqa: E402
+import libindex  # noqa: E402
 import pack  # noqa: E402
 
 RETROID = os.path.abspath(os.path.join(HERE, "..", "..", ".."))           # ...\firmware
@@ -279,23 +280,31 @@ def main():
         render(args, jobs)
     t_render = time.time()
 
-    n = 0
+    # Own library: carts in <uit>\M\xx\xxxx.CRT + index MY.BIN (wins over the
+    # base pack's INDEX.BIN on the cart). Keys: GBA game code, file name, CRC.
+    n, pairs = 0, []
+    if os.path.isdir(os.path.join(args.uit, "M")):
+        shutil.rmtree(os.path.join(args.uit, "M"))
     for g, info, rdir, tex in todo:
         crt = os.path.join(args.db, "crt", os.path.basename(rdir) + ".crt")
         if not os.path.exists(os.path.join(rdir, "poses.json")):
             print("    render ontbreekt, overgeslagen: %s" % info.get("name"))
             continue
         pack.write_crt(rdir, info, crt, card_label=tex)
-        targets = []
-        if g.get("key"):
-            targets.append(g["key"] + ".CRT")
-        else:
-            targets.append("N/" + safe_name(os.path.splitext(g["file"])[0]) + ".CRT")
-        for t in targets:
-            dest = os.path.join(args.uit, *t.split("/"))
-            os.makedirs(os.path.dirname(dest), exist_ok=True)
-            shutil.copyfile(crt, dest)
-            n += 1
+        dest = libindex.cart_path(args.uit, "M", n)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        shutil.copyfile(crt, dest)
+        fam = libindex.FAMILY[g["system"]]
+        if g.get("code") and re.fullmatch(r"[0-9A-Za-z]{4}", g["code"]):
+            pairs.append((libindex.key("S", fam, g["code"].upper()), n))
+        pairs.append((libindex.name_key(fam, g["file"]), n))
+        crc = g.get("crc_nohdr") or g.get("crc")
+        if crc and g["system"] != "gba":
+            pairs.append((libindex.key("C", fam, crc), n))
+        n += 1
+    libindex.write_index(os.path.join(args.uit, "MY.BIN"), pairs)
+    os.makedirs(os.path.join(args.uit, "_BLANK"), exist_ok=True)
+    shutil.copyfile(os.path.join(HERE, "..", "..", "res", "carts.bin"), os.path.join(args.uit, "_BLANK", "BLANK.BIN"))
     with open(dbfile, "w", encoding="utf-8") as f:
         json.dump(db, f, ensure_ascii=False, indent=1)
 

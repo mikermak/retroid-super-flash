@@ -6,6 +6,22 @@
 #define LOGO_HQ_NCOL 216
 #define LOGO_HQ_BASE 20
 
+#ifdef LOGO_HQ_FROM_ASSET
+// chis: the logo lives in flash (vfs asset "LOGO" = res/logo_hq.bin: palette,
+// then pixels) and is copied to SDRAM at start-up; saves ~7.6 KB of EWRAM.
+static const uint8_t *logo_hq_data;
+
+static void render_logo_hq(volatile uint8_t *frame, unsigned cx, unsigned cy) {
+  if (!logo_hq_data)
+    return;
+  dma_memcpy16(&MEM_PALETTE[LOGO_HQ_BASE], logo_hq_data, LOGO_HQ_NCOL);
+  MEM_PALETTE[LOGO_HQ_BASE] = MEM_PALETTE[17];   // index 17 = BG_COLOR (theme background)
+  const uint8_t *img = logo_hq_data + 2 * LOGO_HQ_NCOL;
+  unsigned x = cx - LOGO_HQ_W/2, y = cy - LOGO_HQ_H/2;
+  for (unsigned r = 0; r < LOGO_HQ_H; r++)
+    dma_memcpy16(&frame[(y + r) * SCREEN_WIDTH + x], &img[r*LOGO_HQ_W], LOGO_HQ_W/2);
+}
+#else
 static const uint16_t logo_hq_pal[LOGO_HQ_NCOL] = {
   0x0000,0x7fff,0x7fff,0x7fff,0x7fff,0x7bde,0x77be,0x739c,0x673a,0x5ad7,0x5294,0x41fd,
   0x421a,0x4217,0x4e72,0x4e72,0x4633,0x4a52,0x4631,0x4210,0x3dee,0x359f,0x295f,0x319c,
@@ -87,3 +103,4 @@ static void render_logo_hq(volatile uint8_t *frame, unsigned cx, unsigned cy) {
   for (unsigned r = 0; r < LOGO_HQ_H; r++)
     dma_memcpy16(&frame[(y + r) * SCREEN_WIDTH + x], &logo_hq_img[r*LOGO_HQ_W], LOGO_HQ_W/2);
 }
+#endif

@@ -262,6 +262,13 @@ static void shadow(volatile uint8_t *fb, int cx, int w) {
 
 static void draw_cart(volatile uint8_t *fb, const t_cg_cart *c, uint16_t *pal) {
   const t_crt *crt = c->crt;
+  if (!crt) {
+    // No blank carts on the SD: a flat card with the name.
+    int w = c->pose == CG_POSE_F ? 70 : c->pose <= CG_POSE_MR ? 52 : 36, h = c->pose == CG_POSE_F ? 84 : 70;
+    rrect(fb, c->x - w / 2, CG_FLOOR_Y - h, w, h, 3, CG_FG);
+    rrect(fb, c->x - w / 2 + 3, CG_FLOOR_Y - h + 10, w - 6, h - 20, 2, CG_PAL_SHELF_HI);
+    return;
+  }
   const t_crt_pose *p = &crt->poses[c->pose];
   const uint8_t *base = (const uint8_t*)crt;
   const uint8_t *data = base + p->off;
@@ -314,7 +321,7 @@ void cg_place(t_cg_scene *s, const t_cg_item items[5], int slide) {
   uint8_t order[5], n = 0;
   for (int k = 0; k < 5; k++) {
     us[k] = (k - 2) * CG_U_ONE + slide;
-    if (items[k].crt)
+    if (items[k].title)               // present (crt may be NULL: placeholder)
       order[n++] = k;
   }
   // Farthest from the centre first.
