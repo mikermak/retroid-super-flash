@@ -2206,6 +2206,13 @@ void render_info(volatile uint8_t *frame) {
     npf_snprintf(tmp, sizeof(tmp), "Card ID: %02x | %04x", sd_info.manufacturer, sd_info.oemid);
     draw_central_text(tmp, frame, 120, 110);
     break;
+#ifdef USE_CAROUSEL
+  case 4:
+    draw_central_text("Carousel inspired by slot.", frame, 120, 70);
+    draw_central_text("GBA cart model: Vxcl", frame, 120, 90);
+    draw_central_text("CC-BY 4.0 (sketchfab.com)", frame, 120, 110);
+    break;
+#endif
   }
 
   // Flashing info
@@ -3467,7 +3474,11 @@ static void keypress_menu_tools(unsigned newkeys) {
 
 static void keypress_menu_info(unsigned newkeys) {
   if (newkeys & KEY_BUTTA)
+#ifdef USE_CAROUSEL
+    smenu.info.selector = (smenu.info.selector + 1) % 5;   // + credits panel
+#else
     smenu.info.selector = (smenu.info.selector + 1) % 4;
+#endif
   if ((newkeys & FLASH_UNLOCK_KEYS) == FLASH_UNLOCK_KEYS)
     enable_flashing = true;
 }

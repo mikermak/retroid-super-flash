@@ -46,6 +46,8 @@ DOCS = os.path.dirname(RETROID)                                           # ...\
 DEF_DB = os.path.join(RETROID, "library-db")
 DEF_ENV = os.path.join(DOCS, "builders", "game-label-configurator", ".env.local")
 DEF_BLENDER = os.path.join(DOCS, "builders", "gb-builder-3d", ".tools", "blender-5.2.2-windows-x64", "blender.exe")
+# GBA cartridge model: "Gameboy Advance Cartridge" by Vxcl, CC-BY-4.0 (see CREDITS.md).
+DEF_GBA_MODEL = os.path.join(DEF_DB, "models", "gameboy_advance_cartridge.glb")
 RENDER_VERSION = 1
 
 EXTS = {".gba": "gba", ".agb": "gba", ".gb": "gb", ".gbc": "gbc", ".cgb": "gbc"}
@@ -139,7 +141,7 @@ def cart_colour(g, name):
         if re.search(pat, low):
             return srgb_to_linear(h), clear
     if g["system"] == "gba":
-        return srgb_to_linear("46474c"), False
+        return None, False                         # The model's own grey
     if g["system"] == "gbc" or g.get("cgb", 0) & 0x80:
         return srgb_to_linear("1e1e22"), False     # Game Boy Color carts are black
     return srgb_to_linear("a2a2a8"), False         # Classic grey Game Boy cart
@@ -174,6 +176,7 @@ def main():
     ap.add_argument("--db", default=DEF_DB, help="database/cache-map (alleen lokaal)")
     ap.add_argument("--env", default=DEF_ENV, help=".env.local met de Screenscraper-gegevens")
     ap.add_argument("--blender", default=DEF_BLENDER)
+    ap.add_argument("--gba-model", default=DEF_GBA_MODEL, help="GBA-cartmodel (.glb); ontbreekt het, dan het eigen model")
     ap.add_argument("--regio", default="eu", choices=["eu", "us", "jp"])
     ap.add_argument("--samples", type=int, default=48, help="Blender render-samples")
     ap.add_argument("--blanco", help="maak alleen de lege carts voor de firmware (res/carts.bin)")
@@ -225,7 +228,8 @@ def main():
         body, clear = cart_colour(g, info.get("name"))
         ident = "%s_%s" % (g["system"], info.get("ssid") or safe_name(info["name"]))
         rdir = os.path.join(args.db, "renders", ident)
-        stamp = json.dumps([RENDER_VERSION, tex and os.path.basename(tex), body, clear, g["system"]])
+        model = os.path.basename(args.gba_model) + ":3" if g["system"] == "gba" and os.path.exists(args.gba_model) else ""
+        stamp = json.dumps([RENDER_VERSION, tex and os.path.basename(tex), body, clear, g["system"], model])
         sfile = os.path.join(rdir, "stamp.json")
         if not (os.path.exists(sfile) and open(sfile).read() == stamp):
             jobs.append({"system": g["system"], "body": body, "clear": clear, "label": tex, "out": rdir,
@@ -268,7 +272,7 @@ def main():
 
 
 def render(args, jobs):
-    cfg = {"supersample": 3, "samples": args.samples, "poses": pack.RENDER_POSES,
+    cfg = {"supersample": 3, "samples": args.samples, "poses": pack.RENDER_POSES, "gba_model": args.gba_model,
            "jobs": [{k: v for k, v in j.items() if not k.startswith("_")} for j in jobs]}
     os.makedirs(os.path.join(args.db, "tmp"), exist_ok=True)
     jf = os.path.join(args.db, "tmp", "jobs_%d.json" % os.getpid())
@@ -294,8 +298,8 @@ def render(args, jobs):
 def make_blanks(args):
     """Blank carts (one per system) for the firmware: res/carts.bin."""
     jobs = []
-    for system, col in (("gba", "46474c"), ("gb", "a2a2a8"), ("gbc", "1e1e22"), ("folder", "e2b85e")):
-        jobs.append({"system": system, "body": srgb_to_linear(col), "clear": False, "label": None,
+    for system, col in (("gba", None), ("gb", "a2a2a8"), ("gbc", "1e1e22"), ("folder", "e2b85e")):
+        jobs.append({"system": system, "body": srgb_to_linear(col) if col else None, "clear": False, "label": None,
                      "out": os.path.join(args.db, "renders", "blank_" + system), "_stamp": "blank"})
     render(args, jobs)
     blobs = []

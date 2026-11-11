@@ -142,6 +142,9 @@ def label_material():
     nt.links.new(coord.outputs["UV"], mapping.inputs["Vector"])
     nt.links.new(mapping.outputs["Vector"], tex.inputs["Vector"])
     nt.links.new(tex.outputs["Color"], p.inputs["Base Color"])
+    # A touch of self-illumination keeps labels vivid at 240x160.
+    nt.links.new(tex.outputs["Color"], p.inputs["Emission Color"])
+    p.inputs["Emission Strength"].default_value = 0.12
     return m
 
 
@@ -156,9 +159,13 @@ def set_label(m, path, label_aspect):
         for l in list(p.inputs["Base Color"].links):
             nt.links.remove(l)
         p.inputs["Base Color"].default_value = (0.86, 0.85, 0.82, 1.0)
+        for l in list(p.inputs["Emission Color"].links):
+            nt.links.remove(l)
+        p.inputs["Emission Color"].default_value = (0.86, 0.85, 0.82, 1.0)
         return
     if not p.inputs["Base Color"].links:
         nt.links.new(tex.outputs["Color"], p.inputs["Base Color"])
+        nt.links.new(tex.outputs["Color"], p.inputs["Emission Color"])
     old = tex.image
     img = bpy.data.images.load(path, check_existing=False)
     img.colorspace_settings.name = 'sRGB'
@@ -287,6 +294,111 @@ def build_folder(body_mat, lab_mat):
 
 
 # ---------------------------------------------------------------------------
+# GBA: external model "Gameboy Advance Cartridge" by Vxcl (CC-BY-4.0,
+# https://sketchfab.com/3d-models/gameboy-advance-cartridge-38c1e6702e5d4f21af1d0930689b1d10)
+
+GBA_PLASTIC = ("Cartrough", "cARTsmooth")
+
+
+def build_gba_model(path, lab_mat):
+    """Imports the GBA cart model, faces it to the camera, scales it to 57 mm
+    and gives the label face our own 0..1 UVs + the label material."""
+    before = set(bpy.data.objects)
+    bpy.ops.import_scene.gltf(filepath=path)
+    new = [o for o in bpy.data.objects if o not in before]
+    bpy.context.view_layer.update()
+    meshes = {}
+    for o in new:
+        if o.type == 'MESH' and o.material_slots:
+            meshes[o.material_slots[0].material.name] = o
+    keep = [meshes[n] for n in GBA_PLASTIC + ("gblabel",) if n in meshes]
+    # Bake the hierarchy away, drop the screw (back side) and the PCB (inside).
+    for o in keep:
+        mw = o.matrix_world.copy()
+        o.parent = None
+        o.data.transform(mw)
+        o.matrix_world = Matrix.Identity(4)
+    for o in new:
+        if o not in keep:
+            bpy.data.objects.remove(o)
+
+    # Model space: label on +X, Z up. Turn it so the label faces -Y (camera).
+    ws = [v.co for o in keep for v in o.data.vertices]
+    mn = Vector([min(v[i] for v in ws) for i in range(3)])
+    mx = Vector([max(v[i] for v in ws) for i in range(3)])
+    width = mx.y - mn.y
+    k = 57.0 * MM / width
+    m = (Matrix.Rotation(math.radians(-90), 4, 'Z') @ Matrix.Scale(k, 4) @
+         Matrix.Translation((-(mn.x + mx.x) / 2, -(mn.y + mx.y) / 2, -mn.z)))
+    for o in keep:
+        o.data.transform(m)
+
+    root = bpy.data.objects.new("root_gba", None)
+    bpy.context.scene.collection.objects.link(root)
+    for o in keep:
+        o.parent = root
+        bpy.context.view_layer.objects.active = o
+
+    label = meshes.get("gblabel")
+    lb = [v.co for v in label.data.vertices]
+    lx0, lx1 = min(v.x for v in lb), max(v.x for v in lb)
+    lz0, lz1 = min(v.z for v in lb), max(v.z for v in lb)
+    ly = min(v.y for v in lb) - 0.02 * MM
+    for v in label.data.vertices:
+        v.co.y -= 0.02 * MM           # Just in front of the moulded recess
+    uv = label.data.uv_layers.active
+    for loop in label.data.loops:
+        co = label.data.vertices[loop.vertex_index].co
+        uv.data[loop.index].uv = ((co.x - lx0) / (lx1 - lx0), (co.z - lz0) / (lz1 - lz0))
+    label.data.materials.clear()
+    label.data.materials.append(lab_mat)
+
+    # Tint stage on the plastic: base colour x (target / average colour).
+    mats = []
+    for n in GBA_PLASTIC:
+        if n not in meshes:
+            continue
+        mat = meshes[n].material_slots[0].material
+        nt = mat.node_tree
+        p = next(x for x in nt.nodes if x.type == 'BSDF_PRINCIPLED')
+        link = p.inputs["Base Color"].links[0]
+        tex = link.from_node
+        mix = nt.nodes.new("ShaderNodeMix")
+        mix.data_type = 'RGBA'
+        mix.blend_type = 'MULTIPLY'
+        mix.clamp_result = False
+        mix.inputs["Factor"].default_value = 0.0
+        nt.links.new(link.from_socket, mix.inputs[6])
+        nt.links.new(mix.outputs[2], p.inputs["Base Color"])
+        avg = (0.5, 0.5, 0.5)
+        img = getattr(tex, "image", None)
+        if img:
+            import numpy as np
+            a = np.empty(len(img.pixels), dtype=np.float32)
+            img.pixels.foreach_get(a)
+            a = a.reshape(-1, 4)[::97, :3]
+            avg = tuple(float(x) for x in a.mean(axis=0))
+        mats.append((mat, mix, p, max(1e-3, sum(avg) / 3)))
+    lw, lh = lx1 - lx0, lz1 - lz0
+    return root, (lw, lh, (lz0 + lz1) / 2, ly), mats
+
+
+def tint_gba(mats, rgb, clear):
+    """rgb None = the model's own grey."""
+    for mat, mix, p, avg in mats:
+        # The model's textures are quite dark; lift them a bit so the cart reads
+        # well on the small (and less bright) GBA screen.
+        mix.inputs["Factor"].default_value = 1.0
+        if rgb is None:
+            mix.inputs[7].default_value = (1.45, 1.45, 1.45, 1.0)
+        else:
+            boost = 1.7 if clear else 1.3      # keep coloured plastic readable
+            mix.inputs[7].default_value = (*(min(6.0, boost * c / avg) for c in rgb), 1.0)
+        # Only a hint of transmission: fully clear plastic shows the dark studio.
+        p.inputs["Transmission Weight"].default_value = 0.25 if clear else 0.0
+
+
+# ---------------------------------------------------------------------------
 # Stage: lights, world, camera
 
 def setup_stage(samples):
@@ -389,8 +501,14 @@ def main():
     body_mat = plastic_material("plastic")
     lab_mat = label_material()
     carts = {}
-    for system in ("gba", "gb"):
-        carts[system] = build_cart(system, body_mat, lab_mat)
+    gba_mats = None
+    model = cfg.get("gba_model")
+    if model and os.path.exists(model):
+        r, dims, gba_mats = build_gba_model(model, lab_mat)
+        carts["gba"] = (r, dims)
+    else:
+        carts["gba"] = build_cart("gba", body_mat, lab_mat)
+    carts["gb"] = build_cart("gb", body_mat, lab_mat)
     carts["gbc"] = carts["gb"]
     carts["folder"] = build_folder(body_mat, lab_mat)
 
@@ -403,7 +521,10 @@ def main():
             hide = r is not root
             for ob in [r] + list(r.children):
                 ob.hide_render = hide
-        set_plastic(body_mat, job.get("body", [0.25, 0.25, 0.27]), job.get("clear", False))
+        if system == "gba" and gba_mats:
+            tint_gba(gba_mats, job.get("body"), job.get("clear", False))
+        else:
+            set_plastic(body_mat, job.get("body") or [0.25, 0.25, 0.27], job.get("clear", False))
         set_label(lab_mat, job.get("label"), lw / lh)
         spec = SPECS[system]
         H = spec["h"] * MM

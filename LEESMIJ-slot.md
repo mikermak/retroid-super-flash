@@ -7,12 +7,24 @@ rode Pokémon Ruby, doorzichtig blauwe Crystal, enz.). Onder de cart staan de na
 de uitgever en het aantal spelers.
 
 Geïnspireerd op [slot.](https://github.com/slot-cfw/slot) en
-[slot. advance](https://github.com/FrankieT19/slot-advance) (GPL-3.0). De carts zijn eigen
-3D-modellen op echte maten; er is geen art van slot. gebruikt.
+[slot. advance](https://github.com/FrankieT19/slot-advance) (GPL-3.0); er is geen art van
+slot. gebruikt.
 
-Voorbeelden: map `preview\v2\` (elk plaatje ook 3x vergroot). Het mooiste:
-`hout-gbc-3x.png`, `donker-gba-3x.png`, `licht-gba-3x.png`, `hout-gb-3x.png`,
-en `donker-anim-128-3x.png` (midden in het schuiven).
+**Credits 3D-modellen**
+- GBA-cartridge: "Gameboy Advance Cartridge" door **Vxcl** (https://sketchfab.com/vxclhd),
+  licentie **CC-BY-4.0** (https://creativecommons.org/licenses/by/4.0/), bron:
+  https://sketchfab.com/3d-models/gameboy-advance-cartridge-38c1e6702e5d4f21af1d0930689b1d10 .
+  Aangepast: eigen labels per spel, plastic per spel ingekleurd, schroef/printplaat niet
+  gerenderd. Ook vermeld in de firmware: tabblad Info, druk A tot het paneel "GBA cart model: Vxcl".
+- GB/GBC-carts en de map: eigen modellen.
+
+Het GBA-model staat **niet** in git (9,4 MB, eigen licentie). De tool zoekt het in
+`firmware\library-db\models\gameboy_advance_cartridge.glb` (ander pad: `--gba-model`).
+Ontbreekt het, dan gebruikt de tool het eigen v2-model.
+
+Voorbeelden: map `preview\v3\` (elk plaatje ook 3x vergroot). Het mooiste:
+`donker-gba-3x.png`, `hout-alles-3x.png`, `hout-gbc-3x.png`, `licht-gba-3x.png`,
+`donker-anim-128-3x.png` (midden in het schuiven) en `vergelijk-gba-3x.png` (v2 naast v3).
 Die previews bevatten echte labels en staan daarom niet in git.
 
 Alleen voor de **SuperChis (chis)**. Op SD/Lite-carts blijft de gewone lijst.

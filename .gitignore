@@ -18,6 +18,7 @@ __pycache__/
 
 # Game library (carousel v2): label scans + renders are copyrighted, keep local
 preview/v2/
+preview/v3/
 /LIBRARY/
 /library-db/
 *.crt

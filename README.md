@@ -27,8 +27,13 @@ firmware for Supercard / SuperChis Game Boy Advance flashcarts — by [Retroid](
   five themes (Red/Dark, Red/White, Wood, Dark, Light); the classic list stays available
   (UI settings, *Browser view*). Inspired by **[slot.](https://github.com/slot-cfw/slot)** and
   its EZ-Flash Omega port [slot. advance](https://github.com/FrankieT19/slot-advance) (both
-  GPL-3.0); the cartridge models and all artwork are our own. Label scans are copyrighted by
-  their owners and are never part of this repository or its releases.
+  GPL-3.0). The GB/GBC cartridge and folder models are our own; the **GBA cartridge model** is
+  "Gameboy Advance Cartridge" by **Vxcl** (https://sketchfab.com/vxclhd), licensed
+  **CC-BY-4.0**, source
+  https://sketchfab.com/3d-models/gameboy-advance-cartridge-38c1e6702e5d4f21af1d0930689b1d10
+  (label face re-UV'd, plastic tinted per game; the .glb is not in this repository, see
+  `tools/library/CREDITS.md`). Label scans are copyrighted by their owners and are never part
+  of this repository or its releases.
 
 These additions live in `src/coverart.{c,h}`, `src/carousel_gfx.{c,h}`, `src/menu_carousel.h`, `tools/library/`,
 `src/res/{logo_hq,qr_retroid,tab_icons}.h`, the theme table and render hooks in `src/menu.c`, and the
