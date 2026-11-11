@@ -431,6 +431,176 @@ def tint_gba(mats, rgb, clear):
 
 
 # ---------------------------------------------------------------------------
+# Other external cart models (all CC-BY-4.0, see CREDITS.md):
+#   GB/GBC: "Gameboy cartridge" by Val Turcea, "Gameboy Cartridge" by Karolina D
+#           (same base mesh; the label sits baked into the texture atlas)
+#   NES:    "NES Cartridge" by Anette Rana (separate label plane)
+
+MODEL_CFG = {
+    # label = faces whose UV centre lies in this atlas box (u0, v0, u1, v1)
+    "gb":  dict(label_uv=(0.57, 0.60, 0.93, 0.92), up_axis="-X", height=65.0),
+    # label = the object using this material
+    "nes": dict(label_mat="blinn1", up="label_long", height=133.0),
+}
+
+
+def add_tint(mat):
+    """Inserts base colour x tint into a model material; returns a handle."""
+    nt = mat.node_tree
+    p = next(x for x in nt.nodes if x.type == 'BSDF_PRINCIPLED')
+    mix = nt.nodes.new("ShaderNodeMix")
+    mix.data_type = 'RGBA'
+    mix.blend_type = 'MULTIPLY'
+    mix.clamp_result = False
+    mix.inputs["Factor"].default_value = 0.0
+    avg = 0.5
+    if p.inputs["Base Color"].links:
+        link = p.inputs["Base Color"].links[0]
+        nt.links.new(link.from_socket, mix.inputs[6])
+        img = getattr(link.from_node, "image", None)
+        if img:
+            import numpy as np
+            a = np.empty(len(img.pixels), dtype=np.float32)
+            img.pixels.foreach_get(a)
+            avg = float(a.reshape(-1, 4)[::97, :3].mean())
+    else:
+        c = p.inputs["Base Color"].default_value
+        mix.inputs[6].default_value = c
+        avg = (c[0] + c[1] + c[2]) / 3
+    nt.links.new(mix.outputs[2], p.inputs["Base Color"])
+    return (mat, mix, p, max(1e-3, avg), p.inputs["Metallic"].default_value,
+            p.inputs["Roughness"].default_value)
+
+
+def tint_model(handles, rgb, clear, metal=False, neutral=1.0):
+    for mat, mix, p, avg, met0, rough0 in handles:
+        mix.inputs["Factor"].default_value = 1.0
+        if rgb is None:
+            mix.inputs[7].default_value = (neutral, neutral, neutral, 1.0)
+        else:
+            boost = 1.7 if clear else 1.15
+            mix.inputs[7].default_value = (*(min(8.0, boost * c / avg) for c in rgb), 1.0)
+        p.inputs["Transmission Weight"].default_value = 0.25 if clear else 0.0
+        p.inputs["Metallic"].default_value = 0.65 if metal else met0
+        p.inputs["Roughness"].default_value = 0.32 if metal else rough0
+
+
+def build_model_cart(path, kind, lab_mat):
+    cfgm = MODEL_CFG[kind]
+    before = set(bpy.data.objects)
+    bpy.ops.import_scene.gltf(filepath=path)
+    new = [o for o in bpy.data.objects if o not in before]
+    bpy.context.view_layer.update()
+    meshes = [o for o in new if o.type == 'MESH']
+    for o in meshes:
+        mw = o.matrix_world.copy()
+        o.parent = None
+        o.data.transform(mw)
+        o.matrix_world = Matrix.Identity(4)
+    for o in new:
+        if o.type != 'MESH':
+            bpy.data.objects.remove(o)
+
+    # Label faces as (object, [polygon indices]).
+    lab = []
+    if "label_mat" in cfgm:
+        for o in meshes:
+            if o.material_slots and o.material_slots[0].material.name.startswith(cfgm["label_mat"]):
+                lab.append((o, [p.index for p in o.data.polygons]))
+    else:
+        u0, v0, u1, v1 = cfgm["label_uv"]
+        for o in meshes:
+            uv = o.data.uv_layers.active
+            sel = []
+            for p in o.data.polygons:
+                us = [uv.data[l].uv for l in p.loop_indices]
+                cu = sum(u.x for u in us) / len(us)
+                cv = sum(u.y for u in us) / len(us)
+                if u0 <= cu <= u1 and v0 <= cv <= v1:
+                    sel.append(p.index)
+            if sel:
+                lab.append((o, sel))
+    lpts = [o.data.vertices[i].co.copy() for o, ps in lab for pi in ps for i in o.data.polygons[pi].vertices]
+    allp = [v.co.copy() for o in meshes for v in o.data.vertices]
+    n = Vector()
+    for o, ps in lab:
+        for pi in ps:
+            n += o.data.polygons[pi].normal * o.data.polygons[pi].area
+    n.normalize()
+    lc = sum(lpts, Vector()) / len(lpts)
+    mc = sum(allp, Vector()) / len(allp)
+    if (lc - mc).dot(n) < 0:
+        n = -n
+
+    def principal(pts):
+        import numpy as np
+        a = np.array([[q.x, q.y, q.z] for q in pts])
+        a = a - a.mean(axis=0)
+        nn = np.array([n.x, n.y, n.z])
+        a = a - np.outer(a @ nn, nn)          # in the label plane only
+        w, v = np.linalg.eigh(a.T @ a)
+        d = v[:, -1]
+        return Vector((float(d[0]), float(d[1]), float(d[2]))).normalized()
+
+    if "up_axis" in cfgm:
+        # Fixed model axis (+/-X/Y/Z) for meshes where the label is not a guide.
+        ax = cfgm["up_axis"]
+        up = Vector({"X": (1, 0, 0), "Y": (0, 1, 0), "Z": (0, 0, 1)}[ax[-1]])
+        if ax.startswith("-"):
+            up = -up
+    else:
+        up = principal(lpts if cfgm["up"] == "label_long" else allp)
+        if (lc - mc).dot(up) < 0:             # labels sit in the upper part
+            up = -up
+    print("MODELAXES", kind, "normal", tuple(round(c, 3) for c in n), "up", tuple(round(c, 3) for c in up), flush=True)
+    right = up.cross(n).normalized()
+    up = n.cross(right).normalized()
+    R = Matrix((right, -n, up)).to_4x4()      # rows: new x, y, z
+    rp = [R @ q for q in allp]
+    k = cfgm["height"] * MM / (max(q.z for q in rp) - min(q.z for q in rp))
+    T = (Matrix.Scale(k, 4) @
+         Matrix.Translation((-(min(q.x for q in rp) + max(q.x for q in rp)) / 2,
+                             -(min(q.y for q in rp) + max(q.y for q in rp)) / 2,
+                             -min(q.z for q in rp))) @ R)
+    for o in meshes:
+        o.data.transform(T)
+
+    # Label faces: our label material + 0..1 UVs over the label rectangle.
+    lw = lh = lz = ly = None
+    for o, ps in lab:
+        me = o.data
+        if not any(sl.material is lab_mat for sl in o.material_slots):
+            me.materials.append(lab_mat)
+        idx = [i for i, sl in enumerate(o.material_slots) if sl.material is lab_mat][0]
+        if "label_mat" in cfgm:
+            for v in me.vertices:
+                v.co.y -= 0.05 * MM            # a hair in front of the plastic
+        vs = [me.vertices[i].co for pi in ps for i in me.polygons[pi].vertices]
+        x0, x1 = min(v.x for v in vs), max(v.x for v in vs)
+        z0, z1 = min(v.z for v in vs), max(v.z for v in vs)
+        uv = me.uv_layers.active
+        for pi in ps:
+            poly = me.polygons[pi]
+            poly.material_index = idx
+            for l in poly.loop_indices:
+                co = me.vertices[me.loops[l].vertex_index].co
+                uv.data[l].uv = ((co.x - x0) / (x1 - x0), (co.z - z0) / (z1 - z0))
+        lw, lh, lz, ly = x1 - x0, z1 - z0, (z0 + z1) / 2, min(v.y for v in vs)
+
+    root = bpy.data.objects.new("root_" + kind, None)
+    bpy.context.scene.collection.objects.link(root)
+    handles, seen = [], set()
+    for o in meshes:
+        o.parent = root
+        for sl in o.material_slots:
+            m = sl.material
+            if m and m is not lab_mat and m.name not in seen and m.use_nodes:
+                seen.add(m.name)
+                handles.append(add_tint(m))
+    return root, (lw, lh, lz, ly), handles
+
+
+# ---------------------------------------------------------------------------
 # Stage: lights, world, camera
 
 def setup_stage(samples):
@@ -540,10 +710,19 @@ def main():
         carts["gba"] = (r, dims)
     else:
         carts["gba"] = build_cart("gba", body_mat, lab_mat)
-    carts["gb"] = build_cart("gb", body_mat, lab_mat)
+    handles = {}
+    for kind, key in (("gb", "gb_model"), ("nes", "nes_model")):
+        path = cfg.get(key)
+        if path and os.path.exists(path):
+            r, dims, h = build_model_cart(path, kind, lab_mat)
+            carts[kind] = (r, dims)
+            handles[kind] = h
+        else:
+            carts[kind] = build_cart(kind, body_mat, lab_mat)
     carts["gbc"] = carts["gb"]
+    if "gb" in handles:
+        handles["gbc"] = handles["gb"]
     carts["folder"] = build_folder(body_mat, lab_mat)
-    carts["nes"] = build_cart("nes", body_mat, lab_mat)
 
     sc = bpy.context.scene
     tmp = os.path.join(os.path.dirname(os.path.abspath(argv[0])), "_render_tmp_%d.png" % os.getpid())
@@ -556,6 +735,9 @@ def main():
                 ob.hide_render = hide
         if system == "gba" and gba_mats:
             tint_gba(gba_mats, job.get("body"), job.get("clear", False))
+        elif system in handles:
+            tint_model(handles[system], job.get("body"), job.get("clear", False),
+                       job.get("metal", False), cfg.get("neutral_" + system, 1.0))
         else:
             set_plastic(body_mat, job.get("body") or [0.25, 0.25, 0.27], job.get("clear", False))
         set_label(lab_mat, job.get("label"), lw / lh)

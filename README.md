@@ -27,12 +27,14 @@ firmware for Supercard / SuperChis Game Boy Advance flashcarts — by [Retroid](
   five themes (Red/Dark, Red/White, Wood, Dark, Light); the classic list stays available
   (UI settings, *Browser view*). Inspired by **[slot.](https://github.com/slot-cfw/slot)** and
   its EZ-Flash Omega port [slot. advance](https://github.com/FrankieT19/slot-advance) (both
-  GPL-3.0). The GB/GBC cartridge and folder models are our own; the **GBA cartridge model** is
-  "Gameboy Advance Cartridge" by **Vxcl** (https://sketchfab.com/vxclhd), licensed
-  **CC-BY-4.0**, source
-  https://sketchfab.com/3d-models/gameboy-advance-cartridge-38c1e6702e5d4f21af1d0930689b1d10
-  (label face re-UV'd, plastic tinted per game; the .glb is not in this repository, see
-  `tools/library/CREDITS.md`). Label scans are copyrighted by their owners and are never part
+  GPL-3.0). Cartridge models (all **CC-BY-4.0**, Sketchfab): GBA "Gameboy Advance Cartridge"
+  by **Vxcl** (https://sketchfab.com/3d-models/gameboy-advance-cartridge-38c1e6702e5d4f21af1d0930689b1d10),
+  Game Boy / Color "Gameboy cartridge" by **Val Turcea**
+  (https://sketchfab.com/3d-models/gameboy-cartridge-0c4f3c521907447098df0792e6cf9a1b),
+  NES "NES Cartridge" by **Anette Rana**
+  (https://sketchfab.com/3d-models/nes-cartridge-ce42ffeab9144a2fabf3238053d84832).
+  Changed: label faces re-UV'd for per-game labels, plastic tinted per game; the .glb files
+  are not in this repository, see `tools/library/CREDITS.md`. The folder model is our own. Label scans are copyrighted by their owners and are never part
   of this repository or its releases.
 
 These additions live in `src/coverart.{c,h}`, `src/carousel_gfx.{c,h}`, `src/menu_carousel.h`, `tools/library/`,

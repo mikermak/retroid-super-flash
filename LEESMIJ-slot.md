@@ -10,19 +10,30 @@ Geïnspireerd op [slot.](https://github.com/slot-cfw/slot) en
 [slot. advance](https://github.com/FrankieT19/slot-advance) (GPL-3.0); er is geen art van
 slot. gebruikt.
 
-**Credits 3D-modellen**
-- GBA-cartridge: "Gameboy Advance Cartridge" door **Vxcl** (https://sketchfab.com/vxclhd),
-  licentie **CC-BY-4.0** (https://creativecommons.org/licenses/by/4.0/), bron:
-  https://sketchfab.com/3d-models/gameboy-advance-cartridge-38c1e6702e5d4f21af1d0930689b1d10 .
-  Aangepast: eigen labels per spel, plastic per spel ingekleurd, schroef/printplaat niet
-  gerenderd. Ook vermeld in de firmware: tabblad Info, druk A tot het paneel "GBA cart model: Vxcl".
-- GB/GBC-carts en de map: eigen modellen.
+**Credits 3D-modellen** (alle drie licentie **CC-BY-4.0**,
+https://creativecommons.org/licenses/by/4.0/, van Sketchfab)
+- GBA: "Gameboy Advance Cartridge" door **Vxcl** (https://sketchfab.com/vxclhd),
+  https://sketchfab.com/3d-models/gameboy-advance-cartridge-38c1e6702e5d4f21af1d0930689b1d10
+- Game Boy en Game Boy Color: "Gameboy cartridge" door **Val Turcea** (https://sketchfab.com/zwinkers),
+  https://sketchfab.com/3d-models/gameboy-cartridge-0c4f3c521907447098df0792e6cf9a1b
+- NES: "NES Cartridge" door **Anette Rana** (https://sketchfab.com/pertrosfoliea),
+  https://sketchfab.com/3d-models/nes-cartridge-ce42ffeab9144a2fabf3238053d84832
 
-Het GBA-model staat **niet** in git (9,4 MB, eigen licentie). De tool zoekt het in
-`firmware\library-db\models\gameboy_advance_cartridge.glb` (ander pad: `--gba-model`).
-Ontbreekt het, dan gebruikt de tool het eigen v2-model.
+Aangepast: echte labels per spel in plaats van de voorbeeldlabels, plastic per spel
+ingekleurd (grijs, zwart, gekleurd, goud), schroef/printplaat van de GBA niet gerenderd.
+Ook vermeld in de firmware: tabblad Info, druk A tot het paneel "Cart models (CC-BY 4.0)".
+De map (folder) is een eigen model. Getest maar niet gekozen: het Game Boy-model van
+Karolina D (zie `preview\v5\vergelijk-gb-modellen.png`).
 
-NES-voorbeelden: map `preview\v4\` (`donker-nes-3x.png`, `hout-alles-nes-3x.png`,
+De modellen staan **niet** in git. De tool zoekt ze in `firmware\library-db\models\`
+(`gameboy_advance_cartridge.glb`, `gb_cart_valturcea.glb`, `nes_cart_anetterana.glb`;
+ander pad: `--gba-model`, `--gb-model`, `--nes-model`). Ontbreekt er een, dan gebruikt
+de tool voor dat systeem het eenvoudige eigen model.
+
+Nieuwste voorbeelden (v5, alle modellen): map `preview\v5\`, vooral `carts-overzicht.png`
+(alle carttypes naast elkaar), `donker-gb-3x.png`, `donker-gbc-3x.png`, `donker-nes-3x.png`,
+`hout-alles-nes-3x.png` en `licht-nes-anim-128-3x.png`.
+NES-voorbeelden v4: map `preview\v4\` (`donker-nes-3x.png`, `hout-alles-nes-3x.png`,
 `licht-nes-anim-128-3x.png`).
 Voorbeelden GBA/GB/GBC: map `preview\v3\` (elk plaatje ook 3x vergroot). Het mooiste:
 `donker-gba-3x.png`, `hout-alles-3x.png`, `hout-gbc-3x.png`, `licht-gba-3x.png`,
@@ -93,7 +104,8 @@ precies zo heten als in `testset.txt` (No-Intro-namen).
 ## NES-spellen
 
 NES-spellen (.nes) hebben een eigen tabblad **NES** in de carrousel en worden getoond als
-grijze NES-cartridge (eigen 3D-model op echte maten, 120 x 133 x 17 mm) met het echte label.
+grijze NES-cartridge (model van Anette Rana) met het echte label; The Legend of Zelda en
+Zelda II krijgen hun gouden cart.
 Ze starten met A precies zoals in de lijst, via de emulator **PocketNES**:
 - de chis-firmware heeft PocketNES al **ingebouwd**, dus het werkt zonder extra bestand;
 - staat er een eigen `/.superfw/emulators/pocketnes.gba` op de SD, dan gebruikt hij die

@@ -2208,9 +2208,10 @@ void render_info(volatile uint8_t *frame) {
     break;
 #ifdef USE_CAROUSEL
   case 4:
-    draw_central_text("Carousel inspired by slot.", frame, 120, 70);
-    draw_central_text("GBA cart model: Vxcl", frame, 120, 90);
-    draw_central_text("CC-BY 4.0 (sketchfab.com)", frame, 120, 110);
+    draw_central_text("Carousel inspired by slot.", frame, 120, 66);
+    draw_central_text("Cart models (CC-BY 4.0):", frame, 120, 84);
+    draw_central_text("Vxcl, Val Turcea,", frame, 120, 100);
+    draw_central_text("Anette Rana (sketchfab)", frame, 120, 116);
     break;
 #endif
   }

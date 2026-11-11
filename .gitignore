@@ -20,6 +20,7 @@ __pycache__/
 preview/v2/
 preview/v3/
 preview/v4/
+preview/v5/
 /LIBRARY/
 /library-db/
 *.crt

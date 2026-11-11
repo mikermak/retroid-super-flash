@@ -48,6 +48,10 @@ DEF_ENV = os.path.join(DOCS, "builders", "game-label-configurator", ".env.local"
 DEF_BLENDER = os.path.join(DOCS, "builders", "gb-builder-3d", ".tools", "blender-5.2.2-windows-x64", "blender.exe")
 # GBA cartridge model: "Gameboy Advance Cartridge" by Vxcl, CC-BY-4.0 (see CREDITS.md).
 DEF_GBA_MODEL = os.path.join(DEF_DB, "models", "gameboy_advance_cartridge.glb")
+# GB/GBC: "Gameboy cartridge" by Val Turcea; NES: "NES Cartridge" by Anette Rana (CC-BY-4.0).
+DEF_GB_MODEL = os.path.join(DEF_DB, "models", "gb_cart_valturcea.glb")
+DEF_NES_MODEL = os.path.join(DEF_DB, "models", "nes_cart_anetterana.glb")
+MODEL_ARGS = {"gba": "gba_model", "gb": "gb_model", "gbc": "gb_model", "nes": "nes_model"}
 RENDER_VERSION = 1
 
 EXTS = {".gba": "gba", ".agb": "gba", ".gb": "gb", ".gbc": "gbc", ".cgb": "gbc", ".nes": "nes"}
@@ -147,13 +151,28 @@ def cart_colour(g, name):
     if g["system"] == "gba":
         return None, False                         # The model's own grey
     if g["system"] == "nes":
-        return srgb_to_linear("6f6f74"), False     # NES grey
+        return srgb_to_linear("6f6f74"), False     # NES grey (gold Zelda: see is_metal)
     if g["system"] == "gbc" or g.get("cgb", 0) & 0x80:
         return srgb_to_linear("1e1e22"), False     # Game Boy Color carts are black
     return srgb_to_linear("a2a2a8"), False         # Classic grey Game Boy cart
 
 
 # ---------------------------------------------------------------------------
+
+# Gold (metallic) carts.
+GOLD_NES = r"legend of zelda|zelda ii"
+
+
+def is_metal(g, name):
+    low = (name or g.get("nointro") or g.get("file") or "").lower()
+    return g["system"] == "nes" and re.search(GOLD_NES, low) is not None
+
+
+def special_colour(g, name, body, clear):
+    if is_metal(g, name):
+        return srgb_to_linear("c9a43c"), False
+    return body, clear
+
 
 def safe_name(s):
     return re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", s).strip()
@@ -185,6 +204,8 @@ def main():
     ap.add_argument("--env", default=DEF_ENV, help=".env.local met de Screenscraper-gegevens")
     ap.add_argument("--blender", default=DEF_BLENDER)
     ap.add_argument("--gba-model", default=DEF_GBA_MODEL, help="GBA-cartmodel (.glb); ontbreekt het, dan het eigen model")
+    ap.add_argument("--gb-model", default=DEF_GB_MODEL, help="GB/GBC-cartmodel (.glb)")
+    ap.add_argument("--nes-model", default=DEF_NES_MODEL, help="NES-cartmodel (.glb)")
     ap.add_argument("--regio", default="eu", choices=["eu", "us", "jp"])
     ap.add_argument("--samples", type=int, default=48, help="Blender render-samples")
     ap.add_argument("--blanco", help="maak alleen de lege carts voor de firmware (res/carts.bin)")
@@ -234,13 +255,16 @@ def main():
             else:
                 print("    geen label-scan beschikbaar")
         body, clear = cart_colour(g, info.get("name"))
+        body, clear = special_colour(g, info.get("name"), body, clear)
+        metal = is_metal(g, info.get("name"))
         ident = "%s_%s" % (g["system"], info.get("ssid") or safe_name(info["name"]))
         rdir = os.path.join(args.db, "renders", ident)
-        model = os.path.basename(args.gba_model) + ":3" if g["system"] == "gba" and os.path.exists(args.gba_model) else ""
-        stamp = json.dumps([RENDER_VERSION, tex and os.path.basename(tex), body, clear, g["system"], model])
+        mpath = getattr(args, MODEL_ARGS[g["system"]])
+        model = os.path.basename(mpath) + (":3" if g["system"] == "gba" else ":1") if os.path.exists(mpath) else ""
+        stamp = json.dumps([RENDER_VERSION, tex and os.path.basename(tex), body, clear, g["system"], model] + (["metal"] if metal else []))
         sfile = os.path.join(rdir, "stamp.json")
         if not (os.path.exists(sfile) and open(sfile).read() == stamp):
-            jobs.append({"system": g["system"], "body": body, "clear": clear, "label": tex, "out": rdir,
+            jobs.append({"system": g["system"], "body": body, "clear": clear, "metal": metal, "label": tex, "out": rdir,
                          "_stamp": stamp})
         todo.append((g, info, rdir, tex))
         db[g.get("key") or "N/" + safe_name(os.path.splitext(g["file"])[0])] = dict(
@@ -281,6 +305,7 @@ def main():
 
 def render(args, jobs):
     cfg = {"supersample": 3, "samples": args.samples, "poses": pack.RENDER_POSES, "gba_model": args.gba_model,
+           "gb_model": args.gb_model, "nes_model": args.nes_model,
            "jobs": [{k: v for k, v in j.items() if not k.startswith("_")} for j in jobs]}
     os.makedirs(os.path.join(args.db, "tmp"), exist_ok=True)
     jf = os.path.join(args.db, "tmp", "jobs_%d.json" % os.getpid())
