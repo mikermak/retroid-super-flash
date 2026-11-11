@@ -54,6 +54,8 @@
 
 // --- .CRT file (see tools/library/pack.py) ---------------------------------
 enum { CG_POSE_F = 0, CG_POSE_ML, CG_POSE_MR, CG_POSE_L, CG_POSE_R, CG_POSE_CNT };
+#define CG_POSE_Z     5           // Optional 6th pose: zoomed front (NES)
+
 enum { CG_SYS_GBA = 0, CG_SYS_GB = 1, CG_SYS_GBC = 2 };
 
 typedef struct {
@@ -73,9 +75,22 @@ typedef struct {
   char players[8];
   char genre[24];
   uint8_t label[4];                // Label rect in the front pose (x, y, w, h)
-  uint8_t pad[12];
-  t_crt_pose poses[CG_POSE_CNT];
+  uint32_t card_off, card_size;    // Info-card block (0 = none, older files)
+  uint8_t pad[4];
+  t_crt_pose poses[CG_POSE_Z + 1];  // 5 poses + an optional 6th (CG_POSE_Z)
 } t_crt;
+
+// Info card: the label large, pre-scaled, own palette (base..base+ncol-1).
+typedef struct {
+  char magic[4];                   // "CARD"
+  uint8_t w, h, ncol, base;
+  uint8_t layout, pad;             // layout 0 = label left, 1 = label on top
+  uint16_t synlen;                 // Synopsis length (text after the pixels)
+  char region[12];
+  // uint16_t pal[ncol]; uint8_t px[w*h]; char synopsis[synlen];
+} t_crt_card;
+
+_Static_assert(sizeof(t_crt_card) == 24, "t_crt_card layout");
 
 _Static_assert(offsetof(t_crt, poses) == 0x90, "t_crt layout");
 
@@ -85,6 +100,7 @@ typedef struct {
   int16_t x;                       // Screen x of the cart's bottom centre
   uint8_t pose;                    // CG_POSE_*
   bool blank;                      // Blank cart: draw `title` on the label
+  int8_t yoff;                     // Extra vertical offset (zoom transition)
   const char *title;
 } t_cg_cart;
 
@@ -136,6 +152,11 @@ typedef struct {
 // Places the entries at offsets -2..+2 (items[0..4]) with the given slide
 // (1/256 cart units) into s->carts, back to front.
 void cg_place(t_cg_scene *s, const t_cg_item items[5], int slide);
+
+// Info card of one game (label large + details + synopsis). `scroll` is the
+// first text line shown; returns the total number of text lines.
+int cg_render_card(volatile uint8_t *frame, const t_cg_scene *s, const t_crt *crt,
+                   const char *title, int scroll);
 
 // Fills palette entries 1..15 for a theme.
 void cg_theme_palette(const t_cg_theme *t, uint16_t *pal);

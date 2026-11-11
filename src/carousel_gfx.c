@@ -270,10 +270,11 @@ static void draw_cart(volatile uint8_t *fb, const t_cg_cart *c, uint16_t *pal) {
     pal[p->base + i] = data[2 * i] | (data[2 * i + 1] << 8);
   const uint8_t *spans = data + 2 * p->ncol;
   const uint8_t *px = spans + 2 * p->h;
-  int x = c->x - p->ax, y = CG_FLOOR_Y - p->ay;
+  int x = c->x - p->ax, y = CG_FLOOR_Y - p->ay + c->yoff;
 
   shadow(fb, c->x, p->w * 9 / 10);
-  blit_pose(fb, x, y, spans, px, p->h, clip_y0, clip_y1);
+  // The zoomed pose disappears behind the shelf.
+  blit_pose(fb, x, y, spans, px, p->h, clip_y0, c->pose == CG_POSE_Z ? CG_FLOOR_Y : clip_y1);
 
   // Blank cart: print the game name on the label.
   if (c->blank && c->pose == CG_POSE_F && c->title && crt->label[2] > 16) {
@@ -334,6 +335,7 @@ void cg_place(t_cg_scene *s, const t_cg_item items[5], int slide) {
     c->crt = it->crt;
     c->blank = it->blank;
     c->title = it->title;
+    c->yoff = 0;
     s->ncarts++;
   }
 }
@@ -438,6 +440,128 @@ static void draw_footer(volatile uint8_t *fb, const t_cg_scene *s) {
     } else
       text(fb, s->path, left, CG_AREA_Y1, ink);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Info card
+
+// Copies a w x h block of pre-indexed pixels (x may be odd).
+static void blit_rect(volatile uint8_t *fb, int x, int y, int w, int h, const uint8_t *px) {
+  for (int r = 0; r < h; r++, px += w) {
+    volatile uint16_t *row = (volatile uint16_t*)&fb[(y + r) * SW];
+    int xs = x, i = 0;
+    if (xs & 1) {
+      row[xs >> 1] = (row[xs >> 1] & 0x00FF) | (px[0] << 8);
+      xs++; i++;
+    }
+    for (; i + 1 < w; i += 2, xs += 2)
+      row[xs >> 1] = px[i] | (px[i + 1] << 8);
+    if (i < w)
+      row[xs >> 1] = (row[xs >> 1] & 0xFF00) | px[i];
+  }
+}
+
+// One text line of the card (lines outside [y0, y1) are skipped).
+static void card_line(volatile uint8_t *fb, int *n, int scroll, int x, int *y, int y1,
+                      const char *a, const char *b, int bx, int maxw) {
+  if ((*n)++ < scroll || *y + 14 > y1)
+    return;
+  char tmp[64];
+  if (b) {
+    text(fb, a, x, *y, CG_PAL_META);
+    fit_text(b, tmp, sizeof(tmp), maxw - bx);
+    text(fb, tmp, x + bx, *y, CG_PAL_TEXT);
+  } else {
+    fit_text(a, tmp, sizeof(tmp), maxw);
+    text(fb, tmp, x, *y, CG_PAL_TEXT);
+  }
+  *y += 14;
+}
+
+// Word-wraps `t` (len bytes) into lines of `maxw` pixels, drawn via card_line.
+static void card_wrap(volatile uint8_t *fb, int *n, int scroll, int x, int *y, int y1,
+                      const char *t, unsigned len, int maxw, unsigned maxlines) {
+  char buf[64];
+  unsigned pos = 0, lines = 0;
+  while (pos < len && lines < maxlines) {
+    while (pos < len && t[pos] == ' ')
+      pos++;
+    unsigned chunk = (unsigned)imin(len - pos, sizeof(buf) - 1);
+    memcpy(buf, &t[pos], chunk);
+    buf[chunk] = 0;
+    unsigned ow, cnt = font_width_cap_space(buf, maxw, &ow);
+    if (!cnt || pos + chunk == len)
+      cnt = (font_width(buf) <= (unsigned)maxw) ? chunk : (cnt ? cnt : font_width_cap(buf, maxw));
+    if (!cnt)
+      break;
+    buf[cnt] = 0;
+    card_line(fb, n, scroll, x, y, y1, buf, NULL, 0, maxw);
+    pos += cnt;
+    lines++;
+  }
+}
+
+int cg_render_card(volatile uint8_t *fb, const t_cg_scene *s, const t_crt *crt,
+                   const char *title, int scroll) {
+  const uint8_t bg = s->theme->light ? CG_PAL_GRAD : CG_PAL_GRAD + 7;
+  clip_y0 = CG_AREA_Y0; clip_y1 = CG_AREA_Y1;
+  for (int y = CG_AREA_Y0; y < CG_AREA_Y1; y++)
+    hspan(fb, y, 0, SW, bg);
+
+  // The label (or the front render for files without a card).
+  int lw = 0, lh = 0, layout = 0;
+  const uint8_t *base = (const uint8_t*)crt;
+  const t_crt_card *cd = crt->card_off ? (const t_crt_card*)(base + crt->card_off) : NULL;
+  const char *syn = NULL;
+  unsigned synlen = 0;
+  if (cd) {
+    const uint8_t *pd = (const uint8_t*)cd + sizeof(t_crt_card);
+    for (unsigned i = 0; i < cd->ncol; i++)
+      s->pal[cd->base + i] = pd[2 * i] | (pd[2 * i + 1] << 8);
+    lw = cd->w; lh = cd->h; layout = cd->layout;
+    int lx = layout ? (SW - lw) / 2 : 8, ly = CG_AREA_Y0 + 4;
+    rrect(fb, lx - 2, ly - 2, lw + 4, lh + 4, 1, CG_FG);
+    blit_rect(fb, lx, ly, lw, lh, pd + 2 * cd->ncol);
+    syn = (const char*)(pd + 2 * cd->ncol + lw * lh);
+    synlen = cd->synlen;
+  } else {
+    t_cg_cart c = { .crt = crt, .x = 52, .pose = CG_POSE_F, .blank = false, .title = title };
+    const t_crt_pose *p = &crt->poses[CG_POSE_F];
+    lw = 96; lh = 0;
+    c.yoff = (int8_t)(-(CG_FLOOR_Y - CG_AREA_Y0 - 8 - p->h) / 2);
+    draw_cart(fb, &c, s->pal);
+  }
+
+  // Text column.
+  int x = layout ? 8 : (cd ? 8 + lw + 10 : 108);
+  int y = layout ? CG_AREA_Y0 + 4 + lh + 6 : CG_AREA_Y0 + 4;
+  int maxw = SW - 6 - x, n = 0;
+  const int y1 = CG_AREA_Y1 - 1;
+  card_wrap(fb, &n, scroll, x, &y, y1, title, strlen(title), maxw, 2);
+  if ((n++ >= scroll) && y + 4 <= y1)
+    y += 4;
+  static const char *const names[] = { "Year", "Publisher", "Genre", "Players", "Region" };
+  const char *vals[5] = { crt->year, crt->publisher, crt->genre, crt->players, cd ? cd->region : "" };
+  for (unsigned i = 0; i < 5; i++)
+    if (vals[i][0])
+      card_line(fb, &n, scroll, x, &y, y1, names[i], vals[i], font_width("Publisher") + 6, maxw);
+  if (synlen) {
+    if ((n++ >= scroll) && y + 6 <= y1)
+      y += 6;
+    card_wrap(fb, &n, scroll, x, &y, y1, syn, synlen, maxw, 40);
+  }
+
+  // Footer: key help.
+  clip_y0 = CG_AREA_Y1; clip_y1 = 160;
+  for (int yy = CG_AREA_Y1; yy < 160; yy++)
+    hspan(fb, yy, 0, SW, CG_FG);
+  const uint8_t ink = s->theme->light ? CG_BG : CG_FT;
+  text(fb, "A Play   B Back   SEL Options", 4, CG_AREA_Y1, ink);
+  if (n > 8)
+    text(fb, "Up/Dn", SW - 4 - (int)font_width("Up/Dn"), CG_AREA_Y1, ink);
+  draw_header(fb, s);
+  clip_y0 = CG_AREA_Y0; clip_y1 = CG_AREA_Y1;
+  return n;
 }
 
 void cg_render_scene(volatile uint8_t *fb, const t_cg_scene *s) {

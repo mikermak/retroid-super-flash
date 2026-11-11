@@ -601,6 +601,27 @@ def build_model_cart(path, kind, lab_mat):
 
 
 # ---------------------------------------------------------------------------
+# Label mask: a quick flat render (Workbench) where only the label is white.
+# The packer uses it to keep the label free of dithering.
+
+def render_mask(sc, lab_mat, path):
+    eng = sc.render.engine
+    shade = sc.display.shading
+    sc.render.engine = 'BLENDER_WORKBENCH'
+    shade.light = 'FLAT'
+    shade.color_type = 'MATERIAL'
+    for m in bpy.data.materials:
+        m.diffuse_color = (0, 0, 0, 1)
+    lab_mat.diffuse_color = (1, 1, 1, 1)
+    view = sc.view_settings.view_transform
+    sc.view_settings.view_transform = 'Standard'
+    sc.render.filepath = path
+    bpy.ops.render.render(write_still=True)
+    sc.view_settings.view_transform = view
+    sc.render.engine = eng
+
+
+# ---------------------------------------------------------------------------
 # Stage: lights, world, camera
 
 def setup_stage(samples):
@@ -746,6 +767,10 @@ def main():
         os.makedirs(job["out"], exist_ok=True)
         meta = {"system": system, "supersample": ss, "poses": {}}
         for pose in poses:
+            if "systems" in pose and system not in pose["systems"]:
+                continue
+            if pose.get("zoom") and job.get("no_zoom"):
+                continue
             scale = SCALE[system] * pose["scale"]
             fw, fh = pose["canvas"]
             sc.render.resolution_x = fw * ss
@@ -766,7 +791,12 @@ def main():
             bpy.ops.render.render(write_still=True)
             out = os.path.join(job["out"], pose["name"] + ".png")
             os.replace(tmp, out)      # Full (supersampled) size; the packer scales down.
-            pm = {"anchor": [ax, ay]}
+            if job.get("label"):
+                render_mask(sc, lab_mat, os.path.join(job["out"], pose["name"] + "_mask.png"))
+                sc.render.filepath = tmp
+            # Zoom poses stand on the shelf with the canvas bottom (the rest of
+            # the cart is hidden behind the shelf).
+            pm = {"anchor": [ax, fh] if pose.get("zoom") else [ax, ay]}
             if pose["yaw"] == 0:
                 # Label rectangle in image pixels (for drawing titles on blank carts).
                 corners = [Vector((sx * lw / 2, ly, lz + sz * lh / 2)) for sx in (-1, 1) for sz in (-1, 1)]

@@ -221,5 +221,21 @@ def describe(jeu, region):
         genre = pick_text(g.get("noms"), ["en"]) or genre
         if g.get("principale") == "1":
             break
+    # Short description: Dutch if there is one, else English.
+    syn = ""
+    for lang in ("nl", "en"):
+        for e in jeu.get("synopsis") or []:
+            if e.get("langue") == lang and e.get("text"):
+                syn = e["text"]
+                break
+        if syn:
+            break
+    syn = clean(syn.replace("\r", " ").replace("\n", " "))
+    if len(syn) > 900:
+        syn = syn[:880].rsplit(" ", 1)[0] + " ..."
     return {"name": clean(name), "year": year, "publisher": clean(pub), "players": clean(players),
-            "genre": clean(genre), "ssid": jeu.get("id")}
+            "genre": clean(genre), "ssid": jeu.get("id"), "synopsis": syn}
+
+
+REGION_NAMES = {"eu": "Europe", "us": "USA", "jp": "Japan", "wor": "World", "ss": "World",
+                "de": "Germany", "fr": "France", "sp": "Spain", "it": "Italy", "au": "Australia"}

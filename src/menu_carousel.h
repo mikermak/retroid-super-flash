@@ -18,7 +18,8 @@
  *    the ends L/R go to the previous/next tab like before.
  *  - A: start the game (or open a folder)
  *  - B: one folder up; in the root folder: start options of the game
- *  - Up: start options (GBA load pop-up: saves, patches, cheats, RTC...)
+ *  - Up: info card (label large, details, synopsis). There: A play, B back,
+ *    Up/Down scroll, Select start options (GBA load pop-up)
  *  - Select: file manager (delete / hide / write to NOR)
  *  - Start: UI settings tab (B or Start there brings you back)
  *
@@ -34,7 +35,8 @@
 #define CAR_HOLD_DELAY   16      // Frames before auto-repeat kicks in
 #define CAR_SETTLE        3      // Frames without movement before loading
 #define CAR_ABS(x)       ((x) < 0 ? -(x) : (x))
-#define CAR_SLOT_SIZE    (48 * 1024)
+#define CAR_SLOT_SIZE    (64 * 1024)
+#define CAR_ZOOM_WAIT    12      // Frames standing still before zooming in (NES)
 #define CAR_SLOTS        (scratch_mem_size / CAR_SLOT_SIZE)
 #define CAR_LIB_DIR      "/LIBRARY"
 
@@ -61,6 +63,9 @@ static struct {
   bool built;               // carlist is valid for (filter, gen)
   bool fading;              // the blend registers are in "fade" mode
   bool via_start;           // UI settings were opened with Start (B returns)
+  bool card;                // Info card open
+  int card_scroll, card_lines;
+  int zoom;                 // Zoom-in progress of the centre cart (0..256)
   int8_t libdir;            // /LIBRARY exists (-1 = not checked yet)
   int8_t bg_theme;          // Theme the background texture was made for
   unsigned gen;             // browser_gen the list was built for
@@ -369,9 +374,16 @@ static bool car_read_crt(const char *path, uint8_t *dst) {
   if (!ok)
     return false;
   const t_crt *c = (const t_crt*)dst;
-  if (memcmp(c->magic, "RCRT", 4) || c->version != 1 || c->npose < CG_POSE_CNT)
+  if (memcmp(c->magic, "RCRT", 4) || c->version != 1 || c->npose < CG_POSE_CNT || c->npose > CG_POSE_Z + 1)
     return false;
-  for (unsigned i = 0; i < CG_POSE_CNT; i++) {
+  if (c->card_off) {
+    const t_crt_card *cd = (const t_crt_card*)&dst[c->card_off];
+    if (c->card_off + c->card_size > size || (c->card_off & 3) || memcmp(cd->magic, "CARD", 4) ||
+        sizeof(t_crt_card) + 2u * cd->ncol + (unsigned)cd->w * cd->h + cd->synlen > c->card_size ||
+        cd->base < 20 || cd->base + cd->ncol > 240 || cd->w > 232 || cd->h > 140)
+      return false;
+  }
+  for (unsigned i = 0; i < c->npose; i++) {
     const t_crt_pose *p = &c->poses[i];
     if (p->off + p->size > size || p->ncol > 92 || p->base < 20 || p->base + p->ncol > 240 ||
         2u * p->ncol + 2u * p->h > p->size)
@@ -557,6 +569,18 @@ static void render_carousel(volatile uint8_t *frame, unsigned fcnt) {
       it->title = titles[k + 2];
     }
     cg_place(&s, items, car.slide);
+
+    // NES: once the cart stands still, zoom in on its label (6th pose).
+    const t_crt *cc = items[2].crt;
+    bool can_zoom = cc && !items[2].blank && cc->npose > CG_POSE_Z && !car.slide && !car.hold &&
+                    car.settle >= CAR_ZOOM_WAIT;
+    car.zoom = can_zoom ? MIN(256, car.zoom + 40 * (int)fcnt) : 0;
+    if (car.zoom)
+      for (unsigned i = 0; i < s.ncarts; i++)
+        if (s.carts[i].crt == cc && s.carts[i].pose == CG_POSE_F) {
+          s.carts[i].pose = CG_POSE_Z;
+          s.carts[i].yoff = (256 - car.zoom) * 28 / 256;
+        }
     if (items[2].crt) {
       s.name = items[2].title;
       if (!items[2].blank) {
@@ -573,6 +597,12 @@ static void render_carousel(volatile uint8_t *frame, unsigned fcnt) {
   }
   s.counter = counter;
 
+  if (car.card && car.count && items[2].crt) {
+    car.card_lines = cg_render_card(frame, &s, items[2].crt, items[2].title, car.card_scroll);
+    car_pal_dirty = true;
+    return;
+  }
+  car.card = false;
   cg_render_scene(frame, &s);
   car_pal_dirty = true;     // Swapped in at V-blank together with this frame
 }
@@ -622,6 +652,25 @@ static void car_keypress(unsigned keys) {
   unsigned newkeys = keys & ~car.lastkeys;   // Only freshly pressed buttons
   car_ensure();
 
+  if (car.card) {
+    // Info card.
+    if (newkeys & KEY_BUTTB)
+      car.card = false;
+    else if (newkeys & KEY_BUTTA) {
+      car.card = false;
+      car_open_selected(false);
+    }
+    else if (newkeys & KEY_BUTTSEL) {
+      car.card = false;
+      car_open_selected(true);
+    }
+    else if (newkeys & KEY_BUTTUP)
+      car.card_scroll = MAX(0, car.card_scroll - 1);
+    else if (newkeys & KEY_BUTTDOWN)
+      car.card_scroll = MIN(MAX(0, car.card_lines - 6), car.card_scroll + 1);
+    return;
+  }
+
   if (newkeys & KEY_BUTTSTA) {
     smenu.menu_tab = MENUTAB_UILANG;
     car.via_start = true;
@@ -652,7 +701,10 @@ static void car_keypress(unsigned keys) {
       return;
     }
     if (newkeys & KEY_BUTTUP) {
-      car_open_selected(true);
+      if (!sdr_state->fileorder[sdr_state->carlist[car.pos]]->isdir) {
+        car.card = true;
+        car.card_scroll = 0;
+      }
       return;
     }
     if (newkeys & KEY_BUTTSEL) {

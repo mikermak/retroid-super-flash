@@ -52,7 +52,7 @@ DEF_GBA_MODEL = os.path.join(DEF_DB, "models", "gameboy_advance_cartridge.glb")
 DEF_GB_MODEL = os.path.join(DEF_DB, "models", "gb_cart_valturcea.glb")
 DEF_NES_MODEL = os.path.join(DEF_DB, "models", "nes_cart_anetterana.glb")
 MODEL_ARGS = {"gba": "gba_model", "gb": "gb_model", "gbc": "gb_model", "nes": "nes_model"}
-RENDER_VERSION = 1
+RENDER_VERSION = 2      # 2: sharpened labels + label masks + zoom pose (v6)
 
 EXTS = {".gba": "gba", ".agb": "gba", ".gb": "gb", ".gbc": "gbc", ".cgb": "gbc", ".nes": "nes"}
 
@@ -249,7 +249,10 @@ def main():
                 ext = m.get("format") or "png"
                 dest = os.path.join(args.db, "media", str(info["ssid"]), "label_%s.%s" % (m.get("region", "x"), ext))
                 try:
-                    tex = client.download(m["url"], dest)
+                    raw = client.download(m["url"], dest)
+                    info["region"] = ss.REGION_NAMES.get(m.get("region", ""), "")
+                    tex = pack.prep_label(raw, os.path.join(args.db, "labels", "%s_%s_v6.png"
+                                                            % (info["ssid"], m.get("region", "x"))))
                 except ss.SSError as e:
                     print("    label downloaden mislukt: %s" % e)
             else:
@@ -282,7 +285,7 @@ def main():
         if not os.path.exists(os.path.join(rdir, "poses.json")):
             print("    render ontbreekt, overgeslagen: %s" % info.get("name"))
             continue
-        pack.write_crt(rdir, info, crt)
+        pack.write_crt(rdir, info, crt, card_label=tex)
         targets = []
         if g.get("key"):
             targets.append(g["key"] + ".CRT")
@@ -334,6 +337,7 @@ def make_blanks(args):
     for system, col in (("gba", None), ("gb", "a2a2a8"), ("gbc", "1e1e22"), ("folder", "e2b85e"),
                         ("nes", "6f6f74")):
         jobs.append({"system": system, "body": srgb_to_linear(col) if col else None, "clear": False, "label": None,
+                     "no_zoom": True,
                      "out": os.path.join(args.db, "renders", "blank_" + system), "_stamp": "blank"})
     render(args, jobs)
     blobs = []

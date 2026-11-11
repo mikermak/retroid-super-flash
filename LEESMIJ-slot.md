@@ -89,9 +89,29 @@ precies zo heten als in `testset.txt` (No-Intro-namen).
 | L / R | systeem: All, GBA, GB, GBC, NES (lege worden overgeslagen); voorbij het eind naar het vorige/volgende tabblad |
 | A | spel starten (korte fade naar zwart); op een map: openen |
 | B | map terug; in de hoofdmap: opstartopties |
-| Omhoog | opstartopties (saves, patches, cheats, klok) |
+| Omhoog | **infokaart** van het spel (zie hieronder) |
 | Select | bestandsbeheer (verwijderen, verbergen, naar NOR) |
 | Start | instellingen; B of Start brengt je terug |
+
+**Infokaart** (Omhoog): links (of bij GBA bovenaan) het label groot, rechts naam, jaar,
+uitgever, genre, spelers, regio en een korte beschrijving (Engels; Nederlands als
+Screenscraper die heeft).
+
+| Knop in de infokaart | Wat het doet |
+|---|---|
+| A | spel starten |
+| B | terug naar de carrousel |
+| Omhoog / Omlaag | tekst scrollen (beschrijving) |
+| Select | opstartopties (saves, patches, cheats, klok) |
+
+**Inzoomen (NES):** blijft een NES-cart even stilstaan, dan schuift de cart omhoog en
+groter in beeld (alleen het bovenste deel, het label ~1,45x groter); de onderkant
+verdwijnt achter de plank. Bij bewegen gaat hij meteen terug. GB/GBC/GBA zoomen niet in:
+hun label is in de gewone stand al groot genoeg en de infokaart doet de rest.
+
+Infokaart, inzoomen en de scherpere labels werken pas na het **opnieuw draaien van het
+bibliotheek-commando** (oude LIBRARY-bestanden blijven werken: dan zonder zoom en met de
+cart-render in plaats van het grote label op de kaart).
 
 ## Instellingen (tabblad met de wereldbol)
 
@@ -139,8 +159,9 @@ gekozen: dat kan maar één beeldbuffer, waardoor animaties zouden scheuren.
   krijgen het label van het origineel.
 - Accenten (Pokémon) worden als gewone letters getoond (Pokemon), voor de zekerheid.
 - Lite/SD: geen carrousel (geen ruimte in flash).
-- Flash-ruimte chis: na de lege NES-cart nog ~3,7 KB vrij voor het vaste adres 0x190000.
-  Een volgende lege cart past niet meer zonder iets anders te verkleinen.
+- Geheugen chis is nu bijna vol: werkgeheugen (EWRAM) 99,6% (~0,9 KB vrij) en flash nog
+  ~2,2 KB vrij voor het vaste adres 0x190000. Een volgende functie past niet zonder ruimte
+  te maken (bv. de ingebakken lege carts naar een bestand op de SD).
 - Japanse NES-spellen staan in een NES-cart, niet in een Famicom-cart (vervolgidee).
 - Ideeën: box-art als extra stand, meer kleuren-edities, Recent-tab als carrousel.
 

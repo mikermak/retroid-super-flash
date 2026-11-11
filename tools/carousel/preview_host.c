@@ -4,7 +4,7 @@
  * Compiles the real drawing code (src/carousel_gfx.c + the font renderer) for
  * the PC and writes a 240x160 PPM of one carousel frame.
  *
- *   preview_host <theme 0..4> <slide> <filter 0..3> <out.ppm> <item-2> .. <item+2>
+ *   preview_host <theme 0..4> <slide> <filter> <out.ppm> <item-2> .. <item+2> [z<zoom>|c<scroll>]
  *
  * item = "-" (nothing), "file.crt", or "blank:file.crt:Title" (blank cart, "_" = space).
  * slide = animation offset in 1/256 cart units (0 = at rest).
@@ -125,6 +125,17 @@ int main(int argc, char **argv) {
   s.path = "/Games/";
   s.counter = "12/48";
   cg_place(&s, items, slide);
+  // Optional 10th argument: "z<0..256>" = zoom progress (like the firmware),
+  // "c<scroll>" = info card of the centre cart.
+  const char *opt = argc > 10 ? argv[10] : "";
+  if (opt[0] == 'z' && items[2].crt && !items[2].blank && items[2].crt->npose > CG_POSE_Z) {
+    int zoom = atoi(opt + 1);
+    for (unsigned i = 0; i < s.ncarts; i++)
+      if (s.carts[i].crt == items[2].crt && s.carts[i].pose == CG_POSE_F && zoom) {
+        s.carts[i].pose = CG_POSE_Z;
+        s.carts[i].yoff = (256 - zoom) * 28 / 256;
+      }
+  }
   if (items[2].crt) {
     s.name = titles[2];
     if (!items[2].blank) {
@@ -136,7 +147,10 @@ int main(int argc, char **argv) {
       s.meta[2] = items[2].crt->players[0] ? pl : NULL;   // same text as the firmware
     }
   }
-  cg_render_scene(fb, &s);
+  if (opt[0] == 'c' && items[2].crt)
+    cg_render_card(fb, &s, items[2].crt, titles[2], atoi(opt + 1));
+  else
+    cg_render_scene(fb, &s);
 
   pal[251] = 0x7fff;
   { uint32_t f = c555(pal[CG_FG]);

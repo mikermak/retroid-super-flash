@@ -32,7 +32,13 @@ for T in red-dark red-white hout donker licht; do
     shot "$T-alles" $i 0 0 $ALL
     shot "$T-leeg" $i 0 0 $BLANK
     for S in 192 128 64; do shot "$T-anim-$S" $i $S 1 $GBA; done
-    shot "$T-nes" $i 0 4 $NES
+    shot "$T-nes" $i 0 4 $NES z256
+    shot "$T-nes-zoom-overgang" $i 0 4 $NES z96
+    shot "$T-kaart-nes" $i 0 4 $NES c0
+    shot "$T-kaart-gba" $i 0 1 $GBA c0
+    shot "$T-kaart-gb" $i 0 2 $GB c0
+    shot "$T-kaart-gbc" $i 0 3 $GBC c0
+    shot "$T-kaart-gbc-scroll" $i 0 3 $GBC c5
     shot "$T-alles-nes" $i 0 0 $MIX
     shot "$T-nes-anim-128" $i 128 4 $NES
   fi

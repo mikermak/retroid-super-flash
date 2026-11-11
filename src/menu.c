@@ -3562,7 +3562,9 @@ void menu_keypress(unsigned newkeys) {
     // In the carousel L/R first walk through the systems (All/GBA/GB/GBC).
     if (smenu.menu_tab == MENUTAB_ROMBROWSE && carousel_on() && (newkeys & (KEY_BUTTL | KEY_BUTTR))) {
       unsigned fresh = newkeys & ~car.lastkeys;
-      if (fresh & (KEY_BUTTL | KEY_BUTTR))
+      if (car.card)
+        lr_used = true;     // Info card open: L/R do nothing
+      else if (fresh & (KEY_BUTTL | KEY_BUTTR))
         lr_used = car_switch_filter((fresh & KEY_BUTTL) ? -1 : 1);
       else
         lr_used = true;     // Still held from before (another button changed): ignore
