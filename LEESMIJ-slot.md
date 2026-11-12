@@ -87,7 +87,7 @@ Stop de SD-kaart in de pc (bijvoorbeeld als `F:`), open een terminal in de map
 `firmware\superfw-slot` en typ:
 
 ```
-python tools/library/maak_bibliotheek.py --roms F:\ --uit C:\Users\aruur\Documents\Retroid\firmware\library-db\LIBRARY
+python tools/library/maak_bibliotheek.py --roms F:\ --uit ..\library-db\LIBRARY
 ```
 
 Wat er gebeurt: alle .gba/.gb/.gbc/.nes-bestanden worden gelezen, opgezocht bij Screenscraper

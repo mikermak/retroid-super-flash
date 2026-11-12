@@ -2,7 +2,9 @@
 # Usage: python tools/carousel/cart_sheet.py <out.png>
 import os, sys
 from PIL import Image, ImageDraw, ImageFont
-R = r"C:/Users/aruur/Documents/Retroid/firmware/library-db/renders"
+# library-db sits next to the repo (firmware/library-db); override with RETROID_LIBRARY_DB.
+R = os.path.join(os.environ.get("RETROID_LIBRARY_DB") or os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "library-db"), "renders")
 OUT = sys.argv[1]
 rows = [
     ("GBA", "Model: Vxcl (Sketchfab, CC-BY 4.0)", ["gba_84406", "gba_84411"], "blank_gba"),
