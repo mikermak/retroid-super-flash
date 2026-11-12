@@ -622,6 +622,40 @@ def render_mask(sc, lab_mat, path):
 
 
 # ---------------------------------------------------------------------------
+# Render device: CPU by default; RETROID_RENDER_DEVICE=GPU uses the laptop's GPU
+# (OptiX, else CUDA) when available, otherwise falls back to the CPU.
+
+def use_render_device(sc):
+    want = os.environ.get("RETROID_RENDER_DEVICE", "CPU").upper()
+    sc.cycles.device = 'CPU'
+    if want != "GPU":
+        print("Cycles device: CPU (forced)")
+        return
+    try:
+        prefs = bpy.context.preferences.addons['cycles'].preferences
+        for kind in ('OPTIX', 'CUDA'):
+            try:
+                prefs.compute_device_type = kind
+            except TypeError:
+                continue
+            refresh = getattr(prefs, "refresh_devices", None) or prefs.get_devices
+            refresh()
+            gpus = [d for d in prefs.devices if d.type == kind]
+            if not gpus:
+                continue
+            for d in prefs.devices:
+                d.use = (d.type == kind)
+            sc.cycles.device = 'GPU'
+            if hasattr(sc.cycles, "denoising_use_gpu"):
+                sc.cycles.denoising_use_gpu = True      # OIDN on the GPU too
+            print("Cycles device: GPU via %s (%s)" % (kind, ", ".join(d.name for d in gpus)))
+            return
+    except Exception as e:
+        print("Cycles device: GPU not available (%s), using CPU" % e)
+    print("Cycles device: CPU")
+
+
+# ---------------------------------------------------------------------------
 # Stage: lights, world, camera
 
 def setup_stage(samples):
@@ -629,7 +663,8 @@ def setup_stage(samples):
     sc.render.engine = 'CYCLES'
     sc.cycles.samples = samples
     sc.cycles.use_denoising = True
-    sc.cycles.device = 'CPU'
+    sc.cycles.denoiser = 'OPENIMAGEDENOISE'   # same denoiser on CPU and GPU -> same look
+    use_render_device(sc)
     sc.render.film_transparent = True
     sc.view_settings.view_transform = 'AgX'
     sc.view_settings.look = 'AgX - Base Contrast'

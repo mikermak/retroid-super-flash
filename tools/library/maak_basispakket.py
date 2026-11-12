@@ -208,6 +208,7 @@ def main():
 
     # --- 1. Screenscraper (cached, resumable, within the daily quota) -------
     todo, stopped = [], False
+    net_fails, skipped = 0, 0     # a single timeout skips that game (retried next run) instead of stopping
     for system in systems:
         for gk, members in sorted(groups[system].items()):
             sid = "%s:%s" % (system, gk)
@@ -231,9 +232,15 @@ def main():
                 if not jeu:
                     jeu = client.game_info(system, romnom=best["name"] + ".zip")
             except ss.SSError as e:
-                print("  Screenscraper-fout (%s), stop deze run." % e)
-                stopped = True
-                break
+                net_fails += 1
+                skipped += 1
+                if net_fails >= 3 or "netwerkfout" not in str(e):
+                    print("  Screenscraper-fout (%s), stop deze run." % e)
+                    stopped = True
+                    break
+                print("  Screenscraper-fout (%s) bij %s: overgeslagen, volgende run opnieuw." % (e, best["name"]))
+                continue
+            net_fails = 0
             st = {"done": True, "rep": best["name"], "region": region}
             if jeu:
                 info = ss.describe(jeu, region)
@@ -302,7 +309,12 @@ def main():
     # --- 3. Pack + index -----------------------------------------------------
     lib = os.path.join(args.uit, "LIBRARY")
     if os.path.isdir(os.path.join(lib, "C")):
-        shutil.rmtree(os.path.join(lib, "C"))
+        def _clear_readonly(func, path, exc):
+            # Windows: a folder with the read-only attribute cannot be removed (WinError 5).
+            import stat
+            os.chmod(path, stat.S_IWRITE)
+            func(path)
+        shutil.rmtree(os.path.join(lib, "C"), onexc=_clear_readonly)
     pairs, n = [], 0
     for e in carts:
         if not os.path.exists(os.path.join(e["rdir"], "poses.json")):
@@ -330,7 +342,9 @@ def main():
     size = sum(os.path.getsize(os.path.join(dp, f)) for dp, _, fs in os.walk(lib) for f in fs)
     left = (client.maxday - client.today) if client.maxday else "?"
     print("\nKlaar%s: %d carts, %d sleutels in INDEX.BIN, %.1f MB in %s"
-          % (" (deels; draai hetzelfde commando later opnieuw)" if stopped else "", n, nkeys, size / 1e6, lib))
+          % (" (deels; draai hetzelfde commando later opnieuw)" if stopped or skipped else "", n, nkeys, size / 1e6, lib))
+    if skipped:
+        print("Overgeslagen door netwerkfouten: %d spellen (volgende run opnieuw)" % skipped)
     print("Screenscraper: %d verzoeken deze run; vandaag %s/%s gebruikt, nog %s over"
           % (client.requests, client.today or "?", client.maxday or "?", left))
     print("Tijd: renderen %.0fs, totaal %.0fs" % (t_r, time.time() - t0))
